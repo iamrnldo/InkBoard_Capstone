@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+frontend/node_modules/
+
+# Cache
+frontend/node_modules/.cache/
+
+# Environment
+backend/.env
+backend/.env.local
+backend/.env.production
+
+.env
+.env.local
+.env.production
+
+# Build output
+dist/
+build/

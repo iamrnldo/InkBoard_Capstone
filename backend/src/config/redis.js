@@ -1,33 +1,25 @@
 const redis = require("redis");
 require("dotenv").config();
 
-const { createRedisClient } = require("./config/redis");
-
-
 let client = null;
 let isConnected = false;
 
 const createRedisClient = async () => {
-    console.warn("⚠️  Redis unavailable, continuing without cache");
   if (client && isConnected) return client;
 
   client = redis.createClient({
-    host: process.env.REDIS_HOST || "localhost",
-    port: process.env.REDIS_PORT || 6379,
-    password: process.env.REDIS_PASSWORD || undefined,
-    retry_strategy: (options) => {
-      if (options.error && options.error.code === "ECONNREFUSED") {
-        console.warn("⚠️  Redis connection refused, running without cache");
-        return undefined;
-      }
-      if (options.total_retry_time > 1000 * 60 * 60) {
-        return undefined;
-      }
-      if (options.attempt > 10) {
-        return undefined;
-      }
-      return Math.min(options.attempt * 100, 3000);
+    socket: {
+      host: process.env.REDIS_HOST || "localhost",
+      port: parseInt(process.env.REDIS_PORT) || 6379,
+      reconnectStrategy: (retries) => {
+        if (retries > 10) {
+          console.warn("⚠️  Redis max retries reached, disabling cache");
+          return false;
+        }
+        return Math.min(retries * 100, 3000);
+      },
     },
+    password: process.env.REDIS_PASSWORD || undefined,
   });
 
   client.on("connect", () => {
@@ -45,6 +37,10 @@ const createRedisClient = async () => {
     console.warn("⚠️  Redis connection closed");
   });
 
+  client.on("reconnecting", () => {
+    console.warn("⚠️  Redis reconnecting...");
+  });
+
   try {
     await client.connect();
   } catch (err) {
@@ -55,7 +51,6 @@ const createRedisClient = async () => {
   return client;
 };
 
-// Safe get with fallback
 const cacheGet = async (key) => {
   try {
     if (!client || !isConnected) return null;
@@ -67,7 +62,6 @@ const cacheGet = async (key) => {
   }
 };
 
-// Safe set with TTL
 const cacheSet = async (key, value, ttlSeconds = 300) => {
   try {
     if (!client || !isConnected) return false;
@@ -79,7 +73,6 @@ const cacheSet = async (key, value, ttlSeconds = 300) => {
   }
 };
 
-// Safe delete
 const cacheDel = async (key) => {
   try {
     if (!client || !isConnected) return false;
@@ -91,7 +84,6 @@ const cacheDel = async (key) => {
   }
 };
 
-// Delete by pattern
 const cacheDelPattern = async (pattern) => {
   try {
     if (!client || !isConnected) return false;
@@ -106,7 +98,6 @@ const cacheDelPattern = async (pattern) => {
   }
 };
 
-// Check if redis is available
 const isRedisAvailable = () => isConnected;
 
 module.exports = {

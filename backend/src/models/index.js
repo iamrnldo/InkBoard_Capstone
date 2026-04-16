@@ -1,11 +1,13 @@
-const { query, getClient } = require("../config/database");
+const { query, getClient, pool } = require("../config/database");
+const { v4: uuidv4 } = require("uuid");
 
 // ============================================================
-// USER MODELS
+// USER MODEL
 // ============================================================
-
 const UserModel = {
-  // Find user by ID
+  /**
+   * Find user by ID
+   */
   findById: async (id) => {
     const result = await query(
       `SELECT id, username, email, avatar_url, plan, plan_expires_at,
@@ -17,13 +19,17 @@ const UserModel = {
     return result.rows[0] || null;
   },
 
-  // Find user by email
+  /**
+   * Find user by email
+   */
   findByEmail: async (email) => {
     const result = await query("SELECT * FROM users WHERE email = $1", [email]);
     return result.rows[0] || null;
   },
 
-  // Find user by username
+  /**
+   * Find user by username
+   */
   findByUsername: async (username) => {
     const result = await query("SELECT * FROM users WHERE username = $1", [
       username,
@@ -31,7 +37,9 @@ const UserModel = {
     return result.rows[0] || null;
   },
 
-  // Find by OAuth provider
+  /**
+   * Find user by OAuth provider and ID
+   */
   findByOAuth: async (provider, oauthId) => {
     const result = await query(
       "SELECT * FROM users WHERE oauth_provider = $1 AND oauth_id = $2",
@@ -40,9 +48,10 @@ const UserModel = {
     return result.rows[0] || null;
   },
 
-  // Create new user
+  /**
+   * Create a new user
+   */
   create: async ({
-    id,
     username,
     email,
     passwordHash = null,
@@ -54,14 +63,14 @@ const UserModel = {
     emailVerificationExpires = null,
     plan = "lite",
   }) => {
+    const id = uuidv4();
     const result = await query(
       `INSERT INTO users (
-          id, username, email, password_hash, oauth_provider, oauth_id,
-          avatar_url, email_verified, email_verification_token,
-          email_verification_expires, plan, created_at
-        )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())
-        RETURNING *`,
+         id, username, email, password_hash, oauth_provider, oauth_id,
+         avatar_url, email_verified, email_verification_token,
+         email_verification_expires, plan, created_at
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())
+       RETURNING *`,
       [
         id,
         username,
@@ -79,25 +88,27 @@ const UserModel = {
     return result.rows[0];
   },
 
-  // Update user fields
-  update: async (id, fields) => {
-    const allowedFields = [
+  /**
+   * Update user fields dynamically
+   */
+  update: async (id, fields = {}) => {
+    const allowed = [
       "username",
       "email",
-      "avatar_url",
-      "plan",
-      "plan_expires_at",
-      "is_active",
-      "preferences",
       "password_hash",
+      "avatar_url",
       "email_verified",
       "email_verification_token",
       "email_verification_expires",
       "password_reset_token",
       "password_reset_expires",
+      "plan",
+      "plan_expires_at",
+      "is_active",
+      "last_login",
+      "preferences",
       "oauth_provider",
       "oauth_id",
-      "last_login",
     ];
 
     const updates = [];
@@ -105,13 +116,9 @@ const UserModel = {
     let paramCount = 1;
 
     for (const [key, value] of Object.entries(fields)) {
-      if (allowedFields.includes(key)) {
+      if (allowed.includes(key)) {
         updates.push(`${key} = $${paramCount++}`);
-        values.push(
-          typeof value === "object" && value !== null
-            ? JSON.stringify(value)
-            : value,
-        );
+        values.push(value);
       }
     }
 
@@ -127,68 +134,134 @@ const UserModel = {
     return result.rows[0] || null;
   },
 
-  // Soft delete (deactivate)
+  /**
+   * Soft delete (deactivate) user
+   */
   deactivate: async (id) => {
-    await query(
-      "UPDATE users SET is_active = false, updated_at = NOW() WHERE id = $1",
-      [id],
-    );
-  },
-
-  // Downgrade expired plans
-  downgradeExpiredPlans: async () => {
     const result = await query(
-      `UPDATE users
-       SET plan = 'lite', plan_expires_at = NULL, updated_at = NOW()
-       WHERE plan != 'lite'
-         AND plan_expires_at IS NOT NULL
-         AND plan_expires_at < NOW()
-       RETURNING id, email, username`,
-    );
-    return result.rows;
-  },
-
-  // Count total users
-  count: async (filters = {}) => {
-    let where = "WHERE 1=1";
-    const params = [];
-    let i = 1;
-
-    if (filters.plan) {
-      where += ` AND plan = $${i++}`;
-      params.push(filters.plan);
-    }
-    if (filters.is_active !== undefined) {
-      where += ` AND is_active = $${i++}`;
-      params.push(filters.is_active);
-    }
-
-    const result = await query(`SELECT COUNT(*) FROM users ${where}`, params);
-    return parseInt(result.rows[0].count);
-  },
-};
-
-// ============================================================
-// BOARD MODELS
-// ============================================================
-
-const BoardModel = {
-  // Find board by ID
-  findById: async (id) => {
-    const result = await query(
-      `SELECT b.*, u.username as owner_username, u.avatar_url as owner_avatar
-       FROM boards b
-       JOIN users u ON b.user_id = u.id
-       WHERE b.id = $1 AND b.is_deleted = false`,
+      "UPDATE users SET is_active = false, updated_at = NOW() WHERE id = $1 RETURNING id",
       [id],
     );
     return result.rows[0] || null;
   },
 
-  // Find board by share token
+  /**
+   * Check if email or username is taken
+   */
+  exists: async (email, username) => {
+    const result = await query(
+      "SELECT id FROM users WHERE email = $1 OR username = $2",
+      [email, username],
+    );
+    return result.rows.length > 0;
+  },
+
+  /**
+   * Update last login timestamp
+   */
+  updateLastLogin: async (id) => {
+    await query("UPDATE users SET last_login = NOW() WHERE id = $1", [id]);
+  },
+
+  /**
+   * Get all users with pagination and filters (admin)
+   */
+  findAll: async ({
+    page = 1,
+    limit = 20,
+    search = "",
+    plan = "",
+    status = "",
+    excludeAdmins = true,
+  } = {}) => {
+    const offset = (page - 1) * limit;
+    const params = [];
+    const conditions = [];
+    let paramCount = 1;
+
+    if (excludeAdmins) {
+      conditions.push(
+        `u.id NOT IN (SELECT user_id FROM admins WHERE user_id IS NOT NULL)`,
+      );
+    }
+
+    if (search) {
+      conditions.push(
+        `(u.username ILIKE $${paramCount} OR u.email ILIKE $${paramCount})`,
+      );
+      params.push(`%${search}%`);
+      paramCount++;
+    }
+
+    if (plan) {
+      conditions.push(`u.plan = $${paramCount++}`);
+      params.push(plan);
+    }
+
+    if (status === "active") conditions.push("u.is_active = true");
+    else if (status === "inactive") conditions.push("u.is_active = false");
+
+    const whereClause =
+      conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    const dataParams = [...params, limit, offset];
+    const result = await query(
+      `SELECT u.id, u.username, u.email, u.plan, u.plan_expires_at,
+              u.is_active, u.avatar_url, u.oauth_provider, u.email_verified,
+              u.created_at, u.last_login,
+              (SELECT COUNT(*) FROM boards WHERE user_id = u.id AND is_deleted = false) as board_count
+       FROM users u ${whereClause}
+       ORDER BY u.created_at DESC
+       LIMIT $${paramCount} OFFSET $${paramCount + 1}`,
+      dataParams,
+    );
+
+    const countResult = await query(
+      `SELECT COUNT(*) FROM users u ${whereClause}`,
+      params,
+    );
+
+    return {
+      users: result.rows,
+      total: parseInt(countResult.rows[0].count),
+    };
+  },
+
+  /**
+   * Downgrade expired plans to lite
+   */
+  downgradeExpiredPlans: async () => {
+    const result = await query(
+      `UPDATE users
+       SET plan = 'lite', plan_expires_at = NULL, updated_at = NOW()
+       WHERE plan != 'lite' AND plan_expires_at IS NOT NULL AND plan_expires_at < NOW()
+       RETURNING id, email, plan`,
+    );
+    return result.rows;
+  },
+};
+
+// ============================================================
+// BOARD MODEL
+// ============================================================
+const BoardModel = {
+  /**
+   * Find board by ID (not deleted)
+   */
+  findById: async (id) => {
+    const result = await query(
+      "SELECT * FROM boards WHERE id = $1 AND is_deleted = false",
+      [id],
+    );
+    return result.rows[0] || null;
+  },
+
+  /**
+   * Find board by share token (public)
+   */
   findByShareToken: async (token) => {
     const result = await query(
-      `SELECT b.*, u.username as owner_username, u.avatar_url as owner_avatar
+      `SELECT b.*, u.username AS owner_username, u.avatar_url AS owner_avatar
        FROM boards b
        JOIN users u ON b.user_id = u.id
        WHERE b.share_token = $1 AND b.is_public = true AND b.is_deleted = false`,
@@ -197,69 +270,94 @@ const BoardModel = {
     return result.rows[0] || null;
   },
 
-  // Get boards by user
+  /**
+   * Get boards for a user with pagination
+   */
   findByUser: async (
     userId,
-    { limit = 20, offset = 0, search = "", archived = false } = {},
+    { page = 1, limit = 20, search = "", archived = false } = {},
   ) => {
+    const offset = (page - 1) * limit;
     const params = [userId, archived];
-    let searchClause = "";
+    let queryText = `
+      SELECT b.*,
+        COALESCE(
+          json_agg(bc.user_id) FILTER (WHERE bc.user_id IS NOT NULL), '[]'
+        ) AS collaborator_ids
+      FROM boards b
+      LEFT JOIN board_collaborators bc ON b.id = bc.board_id
+      WHERE b.user_id = $1 AND b.is_deleted = false AND b.is_archived = $2
+    `;
 
     if (search) {
       params.push(`%${search}%`);
-      searchClause = `AND (b.title ILIKE $${params.length} OR b.description ILIKE $${params.length})`;
+      queryText += ` AND (b.title ILIKE $${params.length} OR b.description ILIKE $${params.length})`;
     }
 
     params.push(limit, offset);
+    queryText += ` GROUP BY b.id ORDER BY b.updated_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`;
 
-    const result = await query(
-      `SELECT b.*,
-              COALESCE(
-                json_agg(
-                  json_build_object(
-                    'id', u2.id,
-                    'username', u2.username,
-                    'avatar_url', u2.avatar_url,
-                    'permission', bc.permission
-                  )
-                ) FILTER (WHERE bc.user_id IS NOT NULL), '[]'
-              ) as collaborators
-       FROM boards b
-       LEFT JOIN board_collaborators bc ON b.id = bc.board_id
-       LEFT JOIN users u2 ON bc.user_id = u2.id
-       WHERE b.user_id = $1
-         AND b.is_deleted = false
-         AND b.is_archived = $2
-         ${searchClause}
-       GROUP BY b.id
-       ORDER BY b.updated_at DESC
-       LIMIT $${params.length - 1} OFFSET $${params.length}`,
-      params,
+    const result = await query(queryText, params);
+
+    const countResult = await query(
+      "SELECT COUNT(*) FROM boards WHERE user_id = $1 AND is_deleted = false AND is_archived = $2",
+      [userId, archived],
     );
-    return result.rows;
+
+    return {
+      boards: result.rows,
+      total: parseInt(countResult.rows[0].count),
+    };
   },
 
-  // Create board
+  /**
+   * Count active boards for user (for plan limit check)
+   */
+  countByUser: async (userId) => {
+    const result = await query(
+      "SELECT COUNT(*) FROM boards WHERE user_id = $1 AND is_deleted = false AND is_archived = false",
+      [userId],
+    );
+    return parseInt(result.rows[0].count);
+  },
+
+  /**
+   * Create a new board
+   */
   create: async ({
-    id,
     userId,
-    title,
-    description,
+    title = "Untitled Board",
+    description = "",
     canvasData,
     shareToken,
   }) => {
+    const id = uuidv4();
+    const defaultCanvas = canvasData || {
+      elements: [],
+      appState: { viewBackgroundColor: "#ffffff" },
+      files: {},
+    };
+
     const result = await query(
       `INSERT INTO boards (id, user_id, title, description, canvas_data, share_token, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, NOW())
-       RETURNING *`,
-      [id, userId, title, description, JSON.stringify(canvasData), shareToken],
+       VALUES ($1, $2, $3, $4, $5, $6, NOW()) RETURNING *`,
+      [
+        id,
+        userId,
+        title,
+        description,
+        JSON.stringify(defaultCanvas),
+        shareToken,
+      ],
     );
     return result.rows[0];
   },
 
-  // Update board
-  update: async (id, fields) => {
-    const allowedFields = [
+  /**
+   * Update board fields dynamically
+   */
+  update: async (id, fields = {}) => {
+    const allowed = [
       "title",
       "description",
       "canvas_data",
@@ -267,10 +365,11 @@ const BoardModel = {
       "share_token",
       "allow_edit",
       "tags",
+      "thumbnail_url",
       "is_archived",
       "is_deleted",
-      "thumbnail_url",
       "last_accessed",
+      "frame_settings",
     ];
 
     const updates = [];
@@ -278,19 +377,22 @@ const BoardModel = {
     let paramCount = 1;
 
     for (const [key, value] of Object.entries(fields)) {
-      if (allowedFields.includes(key)) {
+      if (allowed.includes(key)) {
         updates.push(`${key} = $${paramCount++}`);
-        values.push(
-          key === "canvas_data" && typeof value === "object"
-            ? JSON.stringify(value)
-            : value,
-        );
+        // Stringify JSONB fields
+        if (["canvas_data", "frame_settings"].includes(key)) {
+          values.push(
+            typeof value === "string" ? value : JSON.stringify(value),
+          );
+        } else {
+          values.push(value);
+        }
       }
     }
 
     if (updates.length === 0) return null;
 
-    updates.push(`updated_at = NOW()`);
+    updates.push("updated_at = NOW()");
     values.push(id);
 
     const result = await query(
@@ -300,57 +402,268 @@ const BoardModel = {
     return result.rows[0] || null;
   },
 
-  // Soft delete
+  /**
+   * Soft delete a board
+   */
   softDelete: async (id, userId) => {
     const result = await query(
-      `UPDATE boards SET is_deleted = true, updated_at = NOW()
-       WHERE id = $1 AND user_id = $2
-       RETURNING id`,
+      "UPDATE boards SET is_deleted = true, updated_at = NOW() WHERE id = $1 AND user_id = $2 RETURNING id",
       [id, userId],
     );
     return result.rows[0] || null;
   },
 
-  // Count boards for user
-  countByUser: async (userId, excludeArchived = false) => {
-    let where = "WHERE user_id = $1 AND is_deleted = false";
-    if (excludeArchived) where += " AND is_archived = false";
-    const result = await query(`SELECT COUNT(*) FROM boards ${where}`, [
-      userId,
-    ]);
-    return parseInt(result.rows[0].count);
-  },
-
-  // Check user permission on board
-  getUserPermission: async (boardId, userId) => {
-    const boardResult = await query(
-      "SELECT user_id, is_public, allow_edit FROM boards WHERE id = $1 AND is_deleted = false",
+  /**
+   * Get collaborators of a board
+   */
+  getCollaborators: async (boardId) => {
+    const result = await query(
+      `SELECT u.id, u.username, u.email, u.avatar_url, bc.permission
+       FROM board_collaborators bc
+       JOIN users u ON bc.user_id = u.id
+       WHERE bc.board_id = $1`,
       [boardId],
     );
-    if (!boardResult.rows[0]) return null;
+    return result.rows;
+  },
 
-    const board = boardResult.rows[0];
+  /**
+   * Add or update a collaborator
+   */
+  upsertCollaborator: async (boardId, userId, permission, invitedBy) => {
+    const result = await query(
+      `INSERT INTO board_collaborators (id, board_id, user_id, permission, invited_by, created_at)
+       VALUES ($1, $2, $3, $4, $5, NOW())
+       ON CONFLICT (board_id, user_id) DO UPDATE SET permission = $4
+       RETURNING *`,
+      [uuidv4(), boardId, userId, permission, invitedBy],
+    );
+    return result.rows[0];
+  },
 
-    if (board.user_id === userId) return "owner";
-
-    const collabResult = await query(
-      "SELECT permission FROM board_collaborators WHERE board_id = $1 AND user_id = $2",
+  /**
+   * Remove a collaborator
+   */
+  removeCollaborator: async (boardId, userId) => {
+    await query(
+      "DELETE FROM board_collaborators WHERE board_id = $1 AND user_id = $2",
       [boardId, userId],
     );
-    if (collabResult.rows[0]) return collabResult.rows[0].permission;
+  },
 
-    if (board.is_public) return board.allow_edit ? "edit" : "view";
+  /**
+   * Check if user is a collaborator with given permission
+   */
+  checkCollaborator: async (boardId, userId, permissions = []) => {
+    let queryText =
+      "SELECT * FROM board_collaborators WHERE board_id = $1 AND user_id = $2";
+    const params = [boardId, userId];
 
-    return null;
+    if (permissions.length > 0) {
+      queryText += ` AND permission = ANY($3)`;
+      params.push(permissions);
+    }
+
+    const result = await query(queryText, params);
+    return result.rows[0] || null;
+  },
+
+  /**
+   * Get all boards with pagination (admin)
+   */
+  findAllAdmin: async ({ page = 1, limit = 20, search = "" } = {}) => {
+    const offset = (page - 1) * limit;
+    const params = [];
+    let whereClause = "WHERE b.is_deleted = false";
+
+    if (search) {
+      params.push(`%${search}%`);
+      whereClause += ` AND (b.title ILIKE $1 OR u.username ILIKE $1)`;
+    }
+
+    params.push(limit, offset);
+
+    const result = await query(
+      `SELECT b.id, b.title, b.is_public, b.created_at, b.updated_at,
+              u.username AS owner_username, u.email AS owner_email, u.plan AS owner_plan
+       FROM boards b
+       JOIN users u ON b.user_id = u.id
+       ${whereClause}
+       ORDER BY b.created_at DESC
+       LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params,
+    );
+
+    const countResult = await query(
+      `SELECT COUNT(*) FROM boards b JOIN users u ON b.user_id = u.id ${whereClause}`,
+      params.slice(0, -2),
+    );
+
+    return {
+      boards: result.rows,
+      total: parseInt(countResult.rows[0].count),
+    };
   },
 };
 
 // ============================================================
-// SUBSCRIPTION & PAYMENT MODELS
+// ADMIN MODEL
 // ============================================================
+const AdminModel = {
+  /**
+   * Find admin record by user ID
+   */
+  findByUserId: async (userId) => {
+    const result = await query(
+      `SELECT a.*, u.email, u.username, u.avatar_url
+       FROM admins a
+       JOIN users u ON a.user_id = u.id
+       WHERE a.user_id = $1 AND a.is_active = true AND a.invitation_accepted = true`,
+      [userId],
+    );
+    return result.rows[0] || null;
+  },
 
+  /**
+   * Find admin by invitation token
+   */
+  findByInvitationToken: async (token) => {
+    const result = await query(
+      `SELECT a.*, u.email, u.username
+       FROM admins a
+       JOIN users u ON a.user_id = u.id
+       WHERE a.invitation_token = $1
+         AND a.invitation_expires > NOW()
+         AND a.invitation_accepted = false`,
+      [token],
+    );
+    return result.rows[0] || null;
+  },
+
+  /**
+   * Find admin by ID
+   */
+  findById: async (id) => {
+    const result = await query("SELECT * FROM admins WHERE id = $1", [id]);
+    return result.rows[0] || null;
+  },
+
+  /**
+   * Get all admins with invited-by info
+   */
+  findAll: async () => {
+    const result = await query(
+      `SELECT a.id, a.role, a.permissions, a.is_active,
+              a.invitation_accepted, a.created_at,
+              u.username, u.email, u.avatar_url,
+              inv.username AS invited_by_username
+       FROM admins a
+       JOIN users u ON a.user_id = u.id
+       LEFT JOIN admins ia ON a.invited_by = ia.id
+       LEFT JOIN users inv ON ia.user_id = inv.id
+       ORDER BY a.created_at DESC`,
+    );
+    return result.rows;
+  },
+
+  /**
+   * Create an admin invitation record
+   */
+  create: async ({
+    userId,
+    role,
+    permissions,
+    invitedBy,
+    invitationToken,
+    invitationExpires,
+  }) => {
+    const id = uuidv4();
+    const result = await query(
+      `INSERT INTO admins (id, user_id, role, permissions, invited_by,
+         invitation_token, invitation_expires, invitation_accepted, is_active, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, false, false, NOW())
+       RETURNING *`,
+      [
+        id,
+        userId,
+        role,
+        JSON.stringify(permissions),
+        invitedBy,
+        invitationToken,
+        invitationExpires,
+      ],
+    );
+    return result.rows[0];
+  },
+
+  /**
+   * Accept an invitation
+   */
+  acceptInvitation: async (id) => {
+    const result = await query(
+      `UPDATE admins
+       SET invitation_accepted = true, is_active = true,
+           invitation_token = NULL, invitation_expires = NULL, updated_at = NOW()
+       WHERE id = $1
+       RETURNING *`,
+      [id],
+    );
+    return result.rows[0] || null;
+  },
+
+  /**
+   * Update admin record
+   */
+  update: async (id, fields = {}) => {
+    const allowed = ["role", "permissions", "is_active"];
+    const updates = [];
+    const values = [];
+    let paramCount = 1;
+
+    for (const [key, value] of Object.entries(fields)) {
+      if (allowed.includes(key)) {
+        updates.push(`${key} = $${paramCount++}`);
+        values.push(key === "permissions" ? JSON.stringify(value) : value);
+      }
+    }
+
+    if (updates.length === 0) return null;
+
+    updates.push("updated_at = NOW()");
+    values.push(id);
+
+    const result = await query(
+      `UPDATE admins SET ${updates.join(", ")} WHERE id = $${paramCount} RETURNING *`,
+      values,
+    );
+    return result.rows[0] || null;
+  },
+
+  /**
+   * Delete admin record
+   */
+  delete: async (id) => {
+    await query("DELETE FROM admins WHERE id = $1", [id]);
+  },
+
+  /**
+   * Check if a user is already an admin
+   */
+  existsByUserId: async (userId) => {
+    const result = await query("SELECT id FROM admins WHERE user_id = $1", [
+      userId,
+    ]);
+    return result.rows.length > 0;
+  },
+};
+
+// ============================================================
+// SUBSCRIPTION MODEL
+// ============================================================
 const SubscriptionModel = {
-  // Find by order ID
+  /**
+   * Find subscription by order ID
+   */
   findByOrderId: async (orderId) => {
     const result = await query(
       "SELECT * FROM subscriptions WHERE order_id = $1",
@@ -359,19 +672,25 @@ const SubscriptionModel = {
     return result.rows[0] || null;
   },
 
-  // Find active subscription for user
+  /**
+   * Find active subscription for user
+   */
   findActiveByUser: async (userId) => {
     const result = await query(
       `SELECT * FROM subscriptions
        WHERE user_id = $1 AND status = 'active'
-       ORDER BY expires_at DESC LIMIT 1`,
+         AND (expires_at IS NULL OR expires_at > NOW())
+       ORDER BY created_at DESC LIMIT 1`,
       [userId],
     );
     return result.rows[0] || null;
   },
 
-  // Create subscription
-  create: async ({ id, userId, plan, orderId, amount, paymentMethod }) => {
+  /**
+   * Create a new subscription
+   */
+  create: async ({ userId, plan, orderId, amount, paymentMethod = "qris" }) => {
+    const id = uuidv4();
     const result = await query(
       `INSERT INTO subscriptions (id, user_id, plan, status, order_id, amount, payment_method, created_at)
        VALUES ($1, $2, $3, 'pending', $4, $5, $6, NOW())
@@ -381,7 +700,9 @@ const SubscriptionModel = {
     return result.rows[0];
   },
 
-  // Activate subscription
+  /**
+   * Activate a subscription
+   */
   activate: async (orderId, expiresAt) => {
     const result = await query(
       `UPDATE subscriptions
@@ -393,17 +714,36 @@ const SubscriptionModel = {
     return result.rows[0] || null;
   },
 
-  // Update status
+  /**
+   * Update subscription status
+   */
   updateStatus: async (orderId, status) => {
-    await query(
-      "UPDATE subscriptions SET status = $1, updated_at = NOW() WHERE order_id = $2",
+    const result = await query(
+      "UPDATE subscriptions SET status = $1, updated_at = NOW() WHERE order_id = $2 RETURNING *",
       [status, orderId],
     );
+    return result.rows[0] || null;
+  },
+
+  /**
+   * Get subscriptions for a user
+   */
+  findByUser: async (userId) => {
+    const result = await query(
+      "SELECT * FROM subscriptions WHERE user_id = $1 ORDER BY created_at DESC",
+      [userId],
+    );
+    return result.rows;
   },
 };
 
+// ============================================================
+// PAYMENT MODEL
+// ============================================================
 const PaymentModel = {
-  // Find by order ID
+  /**
+   * Find payment by order ID
+   */
   findByOrderId: async (orderId) => {
     const result = await query("SELECT * FROM payments WHERE order_id = $1", [
       orderId,
@@ -411,7 +751,68 @@ const PaymentModel = {
     return result.rows[0] || null;
   },
 
-  // Get payment history for user
+  /**
+   * Create a new payment record
+   */
+  create: async ({
+    userId,
+    subscriptionId,
+    orderId,
+    amount,
+    fee = 0,
+    totalPayment,
+    paymentMethod = "qris",
+    paymentNumber = null,
+    expiredAt = null,
+    pakasirData = null,
+  }) => {
+    const result = await query(
+      `INSERT INTO payments (
+         id, user_id, subscription_id, order_id, amount, fee, total_payment,
+         payment_method, payment_number, status, expired_at, pakasir_data, created_at
+       ) VALUES (uuid_generate_v4(), $1, $2, $3, $4, $5, $6, $7, $8, 'pending', $9, $10, NOW())
+       RETURNING *`,
+      [
+        userId,
+        subscriptionId,
+        orderId,
+        amount,
+        fee,
+        totalPayment,
+        paymentMethod,
+        paymentNumber,
+        expiredAt,
+        pakasirData ? JSON.stringify(pakasirData) : null,
+      ],
+    );
+    return result.rows[0];
+  },
+
+  /**
+   * Mark payment as paid
+   */
+  markPaid: async (orderId) => {
+    const result = await query(
+      "UPDATE payments SET status = 'paid', paid_at = NOW(), updated_at = NOW() WHERE order_id = $1 RETURNING *",
+      [orderId],
+    );
+    return result.rows[0] || null;
+  },
+
+  /**
+   * Update payment status
+   */
+  updateStatus: async (orderId, status) => {
+    const result = await query(
+      "UPDATE payments SET status = $1, updated_at = NOW() WHERE order_id = $2 RETURNING *",
+      [status, orderId],
+    );
+    return result.rows[0] || null;
+  },
+
+  /**
+   * Get payment history for user
+   */
   findByUser: async (userId, limit = 20) => {
     const result = await query(
       `SELECT p.*, s.plan
@@ -425,81 +826,127 @@ const PaymentModel = {
     return result.rows;
   },
 
-  // Create payment record
+  /**
+   * Get all payments (admin) with pagination
+   */
+  findAllAdmin: async ({ page = 1, limit = 20, status = "" } = {}) => {
+    const offset = (page - 1) * limit;
+    const params = [];
+    let whereClause = "";
+
+    if (status) {
+      whereClause = "WHERE p.status = $1";
+      params.push(status);
+    }
+
+    params.push(limit, offset);
+
+    const result = await query(
+      `SELECT p.*, s.plan, u.username, u.email
+       FROM payments p
+       LEFT JOIN subscriptions s ON p.subscription_id = s.id
+       JOIN users u ON p.user_id = u.id
+       ${whereClause}
+       ORDER BY p.created_at DESC
+       LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params,
+    );
+
+    const countResult = await query(
+      `SELECT COUNT(*) FROM payments p ${whereClause}`,
+      status ? [status] : [],
+    );
+
+    return {
+      payments: result.rows,
+      total: parseInt(countResult.rows[0].count),
+    };
+  },
+};
+
+// ============================================================
+// AI USAGE MODEL
+// ============================================================
+const AIUsageModel = {
+  /**
+   * Log an AI usage event
+   */
   create: async ({
     userId,
-    subscriptionId,
-    orderId,
-    amount,
-    fee,
-    totalPayment,
-    paymentMethod,
-    paymentNumber,
-    expiredAt,
-    pakasirData,
+    boardId,
+    toolType,
+    prompt,
+    result,
+    tokensUsed = 0,
   }) => {
-    const result = await query(
-      `INSERT INTO payments (
-          id, user_id, subscription_id, order_id, amount, fee,
-          total_payment, payment_method, payment_number, status,
-          expired_at, pakasir_data, created_at
-        )
-        VALUES (uuid_generate_v4(), $1, $2, $3, $4, $5, $6, $7, $8, 'pending', $9, $10, NOW())
-        RETURNING *`,
+    const res = await query(
+      `INSERT INTO ai_usage (id, user_id, board_id, tool_type, prompt, result, tokens_used, created_at)
+       VALUES (uuid_generate_v4(), $1, $2, $3, $4, $5, $6, NOW())
+       RETURNING *`,
       [
         userId,
-        subscriptionId,
-        orderId,
-        amount,
-        fee,
-        totalPayment,
-        paymentMethod,
-        paymentNumber,
-        expiredAt,
-        JSON.stringify(pakasirData),
+        boardId || null,
+        toolType,
+        prompt,
+        typeof result === "string" ? result : JSON.stringify(result),
+        tokensUsed,
       ],
     );
-    return result.rows[0];
+    return res.rows[0];
   },
 
-  // Mark as paid
-  markPaid: async (orderId) => {
-    await query(
-      `UPDATE payments
-       SET status = 'paid', paid_at = NOW(), updated_at = NOW()
-       WHERE order_id = $1`,
-      [orderId],
+  /**
+   * Get usage summary grouped by tool for a user
+   */
+  getSummaryByUser: async (userId) => {
+    const result = await query(
+      `SELECT tool_type, COUNT(*) AS count, SUM(tokens_used) AS total_tokens
+       FROM ai_usage
+       WHERE user_id = $1
+       GROUP BY tool_type`,
+      [userId],
     );
+    return result.rows;
   },
 
-  // Update status
-  updateStatus: async (orderId, status) => {
-    await query(
-      "UPDATE payments SET status = $1, updated_at = NOW() WHERE order_id = $2",
-      [status, orderId],
-    );
-  },
-
-  // Revenue stats
-  getRevenueStats: async (days = 30) => {
+  /**
+   * Get overall AI usage stats (admin)
+   */
+  getAdminStats: async () => {
     const result = await query(
       `SELECT
-          COALESCE(SUM(amount) FILTER (WHERE status = 'paid'), 0) as total_revenue,
-          COALESCE(SUM(amount) FILTER (WHERE status = 'paid' AND created_at > NOW() - INTERVAL '${days} days'), 0) as period_revenue,
-          COUNT(*) FILTER (WHERE status = 'paid') as successful_count,
-          COUNT(*) FILTER (WHERE status = 'pending') as pending_count
-       FROM payments`,
+         COUNT(*) AS total_usage,
+         COUNT(*) FILTER (WHERE tool_type = 'text_to_diagram')      AS text_to_diagram,
+         COUNT(*) FILTER (WHERE tool_type = 'mermaid_to_inkboard')  AS mermaid_to_inkboard,
+         COUNT(*) FILTER (WHERE tool_type = 'wireframe_to_code')    AS wireframe_to_code,
+         SUM(tokens_used)                                           AS total_tokens
+       FROM ai_usage`,
     );
     return result.rows[0];
+  },
+
+  /**
+   * Get AI usage trend over N days (admin analytics)
+   */
+  getTrend: async (days = 30) => {
+    const result = await query(
+      `SELECT DATE(created_at) AS date, tool_type, COUNT(*) AS count
+       FROM ai_usage
+       WHERE created_at > NOW() - INTERVAL '${parseInt(days, 10)} days'
+       GROUP BY DATE(created_at), tool_type
+       ORDER BY date`,
+    );
+    return result.rows;
   },
 };
 
 // ============================================================
 // NOTIFICATION MODEL
 // ============================================================
-
 const NotificationModel = {
-  // Create notification
+  /**
+   * Create a notification for a user
+   */
   create: async ({
     userId,
     title,
@@ -516,34 +963,20 @@ const NotificationModel = {
     return result.rows[0];
   },
 
-  // Get by user
+  /**
+   * Get notifications for a user (latest 20)
+   */
   findByUser: async (userId, limit = 20) => {
     const result = await query(
-      `SELECT * FROM notifications
-       WHERE user_id = $1
-       ORDER BY created_at DESC
-       LIMIT $2`,
+      "SELECT * FROM notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2",
       [userId, limit],
     );
     return result.rows;
   },
 
-  // Mark as read
-  markRead: async (id, userId) => {
-    await query(
-      "UPDATE notifications SET is_read = true WHERE id = $1 AND user_id = $2",
-      [id, userId],
-    );
-  },
-
-  // Mark all as read
-  markAllRead: async (userId) => {
-    await query("UPDATE notifications SET is_read = true WHERE user_id = $1", [
-      userId,
-    ]);
-  },
-
-  // Count unread
+  /**
+   * Count unread notifications for a user
+   */
   countUnread: async (userId) => {
     const result = await query(
       "SELECT COUNT(*) FROM notifications WHERE user_id = $1 AND is_read = false",
@@ -551,14 +984,36 @@ const NotificationModel = {
     );
     return parseInt(result.rows[0].count);
   },
+
+  /**
+   * Mark a specific notification as read
+   */
+  markRead: async (id, userId) => {
+    const result = await query(
+      "UPDATE notifications SET is_read = true WHERE id = $1 AND user_id = $2 RETURNING *",
+      [id, userId],
+    );
+    return result.rows[0] || null;
+  },
+
+  /**
+   * Mark all notifications as read for a user
+   */
+  markAllRead: async (userId) => {
+    await query(
+      "UPDATE notifications SET is_read = true WHERE user_id = $1 AND is_read = false",
+      [userId],
+    );
+  },
 };
 
 // ============================================================
 // ACTIVITY LOG MODEL
 // ============================================================
-
 const ActivityLogModel = {
-  // Create log entry
+  /**
+   * Log a user or admin action
+   */
   log: async ({
     userId = null,
     adminId = null,
@@ -569,281 +1024,65 @@ const ActivityLogModel = {
     ipAddress = null,
     userAgent = null,
   }) => {
-    try {
-      await query(
-        `INSERT INTO activity_logs (
-            id, user_id, admin_id, action, entity_type, entity_id,
-            details, ip_address, user_agent, created_at
-          )
-          VALUES (uuid_generate_v4(), $1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
-        [
-          userId,
-          adminId,
-          action,
-          entityType,
-          entityId,
-          details ? JSON.stringify(details) : null,
-          ipAddress,
-          userAgent,
-        ],
-      );
-    } catch (err) {
-      // Non-fatal: log to console if DB insert fails
-      console.error("Activity log error:", err.message);
-    }
+    const result = await query(
+      `INSERT INTO activity_logs (
+         id, user_id, admin_id, action, entity_type, entity_id,
+         details, ip_address, user_agent, created_at
+       ) VALUES (uuid_generate_v4(), $1, $2, $3, $4, $5, $6, $7, $8, NOW())
+       RETURNING *`,
+      [
+        userId,
+        adminId,
+        action,
+        entityType,
+        entityId,
+        details ? JSON.stringify(details) : null,
+        ipAddress,
+        userAgent,
+      ],
+    );
+    return result.rows[0];
   },
 
-  // Get logs with pagination
-  findAll: async ({
-    limit = 50,
-    offset = 0,
-    userId = null,
-    action = null,
-  } = {}) => {
-    const params = [];
-    let where = "WHERE 1=1";
-    let i = 1;
-
-    if (userId) {
-      where += ` AND al.user_id = $${i++}`;
-      params.push(userId);
-    }
-    if (action) {
-      where += ` AND al.action = $${i++}`;
-      params.push(action);
-    }
-
-    params.push(limit, offset);
-
+  /**
+   * Get activity logs with pagination (admin)
+   */
+  findAll: async ({ page = 1, limit = 50 } = {}) => {
+    const offset = (page - 1) * limit;
     const result = await query(
       `SELECT al.*, u.username, u.email
        FROM activity_logs al
        LEFT JOIN users u ON al.user_id = u.id
-       ${where}
        ORDER BY al.created_at DESC
-       LIMIT $${i} OFFSET $${i + 1}`,
-      params,
+       LIMIT $1 OFFSET $2`,
+      [limit, offset],
+    );
+    const countResult = await query("SELECT COUNT(*) FROM activity_logs");
+    return {
+      logs: result.rows,
+      total: parseInt(countResult.rows[0].count),
+    };
+  },
+
+  /**
+   * Get activity logs for a specific user
+   */
+  findByUser: async (userId, limit = 20) => {
+    const result = await query(
+      "SELECT * FROM activity_logs WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2",
+      [userId, limit],
     );
     return result.rows;
-  },
-
-  // Count logs
-  count: async () => {
-    const result = await query("SELECT COUNT(*) FROM activity_logs");
-    return parseInt(result.rows[0].count);
-  },
-};
-
-// ============================================================
-// AI USAGE MODEL
-// ============================================================
-
-const AIUsageModel = {
-  // Log AI usage
-  log: async ({ userId, boardId, toolType, prompt, result, tokensUsed }) => {
-    await query(
-      `INSERT INTO ai_usage (id, user_id, board_id, tool_type, prompt, result, tokens_used, created_at)
-       VALUES (uuid_generate_v4(), $1, $2, $3, $4, $5, $6, NOW())`,
-      [
-        userId,
-        boardId || null,
-        toolType,
-        prompt,
-        typeof result === "object" ? JSON.stringify(result) : result,
-        tokensUsed || 0,
-      ],
-    );
-  },
-
-  // Get usage summary for user
-  getSummaryByUser: async (userId) => {
-    const result = await query(
-      `SELECT tool_type, COUNT(*) as count, SUM(tokens_used) as total_tokens
-       FROM ai_usage
-       WHERE user_id = $1
-       GROUP BY tool_type`,
-      [userId],
-    );
-    return result.rows;
-  },
-
-  // Get total usage stats (admin)
-  getAdminStats: async () => {
-    const result = await query(
-      `SELECT
-          COUNT(*) as total_usage,
-          COUNT(*) FILTER (WHERE tool_type = 'text_to_diagram') as text_to_diagram,
-          COUNT(*) FILTER (WHERE tool_type = 'mermaid_to_inkboard') as mermaid_to_inkboard,
-          COUNT(*) FILTER (WHERE tool_type = 'wireframe_to_code') as wireframe_to_code,
-          SUM(tokens_used) as total_tokens
-       FROM ai_usage`,
-    );
-    return result.rows[0];
-  },
-
-  // Trend data for analytics
-  getTrend: async (days = 30) => {
-    const result = await query(
-      `SELECT DATE(created_at) as date, tool_type, COUNT(*) as count
-       FROM ai_usage
-       WHERE created_at > NOW() - INTERVAL '${days} days'
-       GROUP BY DATE(created_at), tool_type
-       ORDER BY date`,
-    );
-    return result.rows;
-  },
-};
-
-// ============================================================
-// ADMIN MODEL
-// ============================================================
-
-const AdminModel = {
-  // Find admin by user ID
-  findByUserId: async (userId) => {
-    const result = await query(
-      `SELECT a.*, u.email, u.username, u.avatar_url
-       FROM admins a
-       JOIN users u ON a.user_id = u.id
-       WHERE a.user_id = $1 AND a.is_active = true AND a.invitation_accepted = true`,
-      [userId],
-    );
-    return result.rows[0] || null;
-  },
-
-  // Find admin by invitation token
-  findByInvitationToken: async (token) => {
-    const result = await query(
-      `SELECT a.*, u.email, u.username
-       FROM admins a
-       JOIN users u ON a.user_id = u.id
-       WHERE a.invitation_token = $1
-         AND a.invitation_expires > NOW()
-         AND a.invitation_accepted = false`,
-      [token],
-    );
-    return result.rows[0] || null;
-  },
-
-  // Find admin by ID
-  findById: async (id) => {
-    const result = await query(
-      `SELECT a.*, u.email, u.username, u.avatar_url
-       FROM admins a
-       JOIN users u ON a.user_id = u.id
-       WHERE a.id = $1`,
-      [id],
-    );
-    return result.rows[0] || null;
-  },
-
-  // Get all admins
-  findAll: async () => {
-    const result = await query(
-      `SELECT a.id, a.role, a.permissions, a.is_active,
-              a.invitation_accepted, a.created_at,
-              u.username, u.email, u.avatar_url,
-              inv_u.username as invited_by_username
-       FROM admins a
-       JOIN users u ON a.user_id = u.id
-       LEFT JOIN admins ia ON a.invited_by = ia.id
-       LEFT JOIN users inv_u ON ia.user_id = inv_u.id
-       ORDER BY a.created_at DESC`,
-    );
-    return result.rows;
-  },
-
-  // Create admin (invitation)
-  create: async ({
-    id,
-    userId,
-    role,
-    permissions,
-    invitedBy,
-    invitationToken,
-    invitationExpires,
-  }) => {
-    const result = await query(
-      `INSERT INTO admins (
-          id, user_id, role, permissions, invited_by,
-          invitation_token, invitation_expires,
-          invitation_accepted, is_active, created_at
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, false, false, NOW())
-        RETURNING *`,
-      [
-        id,
-        userId,
-        role,
-        JSON.stringify(permissions),
-        invitedBy,
-        invitationToken,
-        invitationExpires,
-      ],
-    );
-    return result.rows[0];
-  },
-
-  // Accept invitation
-  acceptInvitation: async (id) => {
-    await query(
-      `UPDATE admins
-       SET invitation_accepted = true, is_active = true,
-           invitation_token = NULL, invitation_expires = NULL,
-           updated_at = NOW()
-       WHERE id = $1`,
-      [id],
-    );
-  },
-
-  // Update admin
-  update: async (id, fields) => {
-    const allowed = ["role", "permissions", "is_active"];
-    const updates = [];
-    const values = [];
-    let i = 1;
-
-    for (const [key, value] of Object.entries(fields)) {
-      if (allowed.includes(key)) {
-        updates.push(`${key} = $${i++}`);
-        values.push(key === "permissions" ? JSON.stringify(value) : value);
-      }
-    }
-
-    if (updates.length === 0) return null;
-
-    updates.push(`updated_at = NOW()`);
-    values.push(id);
-
-    const result = await query(
-      `UPDATE admins SET ${updates.join(", ")} WHERE id = $${i} RETURNING *`,
-      values,
-    );
-    return result.rows[0] || null;
-  },
-
-  // Remove admin
-  remove: async (id) => {
-    await query("DELETE FROM admins WHERE id = $1", [id]);
-  },
-
-  // Check if user is admin
-  isAdmin: async (userId) => {
-    const result = await query(
-      `SELECT id FROM admins
-       WHERE user_id = $1 AND is_active = true AND invitation_accepted = true`,
-      [userId],
-    );
-    return result.rows.length > 0;
   },
 };
 
 // ============================================================
 // SITE SETTINGS MODEL
 // ============================================================
-
 const SiteSettingsModel = {
-  // Get all settings
+  /**
+   * Get all site settings as key-value map
+   */
   getAll: async () => {
     const result = await query("SELECT * FROM site_settings");
     const settings = {};
@@ -858,33 +1097,42 @@ const SiteSettingsModel = {
     return settings;
   },
 
-  // Get single setting
+  /**
+   * Get a single setting by key
+   */
   get: async (key) => {
     const result = await query(
       "SELECT value FROM site_settings WHERE key = $1",
       [key],
     );
-    if (!result.rows[0]) return null;
+    if (result.rows.length === 0) return null;
     try {
-      return JSON.parse(result.rows[0].value);
+      return typeof result.rows[0].value === "string"
+        ? JSON.parse(result.rows[0].value)
+        : result.rows[0].value;
     } catch {
       return result.rows[0].value;
     }
   },
 
-  // Set setting
+  /**
+   * Upsert a setting
+   */
   set: async (key, value, updatedBy = null) => {
-    await query(
+    const result = await query(
       `INSERT INTO site_settings (key, value, updated_by, updated_at)
        VALUES ($1, $2, $3, NOW())
-       ON CONFLICT (key) DO UPDATE
-       SET value = $2, updated_by = $3, updated_at = NOW()`,
+       ON CONFLICT (key) DO UPDATE SET value = $2, updated_by = $3, updated_at = NOW()
+       RETURNING *`,
       [key, JSON.stringify(value), updatedBy],
     );
+    return result.rows[0];
   },
 
-  // Bulk update settings
-  bulkSet: async (settingsObj, updatedBy = null) => {
+  /**
+   * Bulk upsert settings
+   */
+  setMany: async (settingsObj = {}, updatedBy = null) => {
     const client = await getClient();
     try {
       await client.query("BEGIN");
@@ -892,8 +1140,7 @@ const SiteSettingsModel = {
         await client.query(
           `INSERT INTO site_settings (key, value, updated_by, updated_at)
            VALUES ($1, $2, $3, NOW())
-           ON CONFLICT (key) DO UPDATE
-           SET value = $2, updated_by = $3, updated_at = NOW()`,
+           ON CONFLICT (key) DO UPDATE SET value = $2, updated_by = $3, updated_at = NOW()`,
           [key, JSON.stringify(value), updatedBy],
         );
       }
@@ -908,137 +1155,146 @@ const SiteSettingsModel = {
 };
 
 // ============================================================
-// LIBRARY MODEL
+// LIBRARY ITEM MODEL
 // ============================================================
+const LibraryItemModel = {
+  /**
+   * Find library item by ID
+   */
+  findById: async (id) => {
+    const result = await query("SELECT * FROM library_items WHERE id = $1", [
+      id,
+    ]);
+    return result.rows[0] || null;
+  },
 
-const LibraryModel = {
-  // Find by user and public items
-  findAll: async ({
-    userId,
-    includePublic = true,
-    limit = 50,
-    offset = 0,
+  /**
+   * Get public library items (templates)
+   */
+  findPublic: async ({
+    page = 1,
+    limit = 20,
+    category = "",
+    search = "",
   } = {}) => {
-    const params = [userId];
-    let where = "WHERE (li.user_id = $1";
-    if (includePublic) {
-      where += " OR li.is_public = true";
-    }
-    where += ")";
+    const offset = (page - 1) * limit;
+    const params = [true];
+    let conditions = ["is_public = $1"];
+    let paramCount = 2;
 
+    if (category) {
+      conditions.push(`category = $${paramCount++}`);
+      params.push(category);
+    }
+
+    if (search) {
+      conditions.push(
+        `(title ILIKE $${paramCount} OR description ILIKE $${paramCount})`,
+      );
+      params.push(`%${search}%`);
+      paramCount++;
+    }
+
+    const whereClause = `WHERE ${conditions.join(" AND ")}`;
     params.push(limit, offset);
 
     const result = await query(
-      `SELECT li.*, u.username as creator_username
-       FROM library_items li
-       JOIN users u ON li.user_id = u.id
-       ${where}
-       ORDER BY li.created_at DESC
-       LIMIT $2 OFFSET $3`,
+      `SELECT id, title, description, thumbnail_url, category, tags, use_count, created_at
+       FROM library_items ${whereClause}
+       ORDER BY use_count DESC, created_at DESC
+       LIMIT $${paramCount} OFFSET $${paramCount + 1}`,
       params,
+    );
+
+    const countResult = await query(
+      `SELECT COUNT(*) FROM library_items ${whereClause}`,
+      params.slice(0, -2),
+    );
+
+    return {
+      items: result.rows,
+      total: parseInt(countResult.rows[0].count),
+    };
+  },
+
+  /**
+   * Get library items for a user
+   */
+  findByUser: async (userId) => {
+    const result = await query(
+      "SELECT * FROM library_items WHERE user_id = $1 ORDER BY created_at DESC",
+      [userId],
     );
     return result.rows;
   },
 
-  // Create library item
+  /**
+   * Create a library item
+   */
   create: async ({
     userId,
     title,
     description,
     canvasData,
+    thumbnailUrl,
     category,
     isPublic,
     tags,
   }) => {
+    const id = uuidv4();
     const result = await query(
-      `INSERT INTO library_items (id, user_id, title, description, canvas_data, category, is_public, tags, created_at)
-       VALUES (uuid_generate_v4(), $1, $2, $3, $4, $5, $6, $7, NOW())
+      `INSERT INTO library_items (id, user_id, title, description, canvas_data, thumbnail_url, category, is_public, tags, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
        RETURNING *`,
       [
+        id,
         userId,
         title,
-        description || null,
+        description,
         JSON.stringify(canvasData),
-        category || null,
-        isPublic || false,
-        tags || [],
+        thumbnailUrl,
+        category,
+        isPublic,
+        tags,
       ],
     );
     return result.rows[0];
   },
 
-  // Increment use count
+  /**
+   * Increment use count
+   */
   incrementUseCount: async (id) => {
     await query(
-      "UPDATE library_items SET use_count = use_count + 1 WHERE id = $1",
+      "UPDATE library_items SET use_count = use_count + 1, updated_at = NOW() WHERE id = $1",
       [id],
     );
   },
 
-  // Delete item
+  /**
+   * Delete a library item
+   */
   delete: async (id, userId) => {
-    await query("DELETE FROM library_items WHERE id = $1 AND user_id = $2", [
-      id,
-      userId,
-    ]);
-  },
-};
-
-// ============================================================
-// BOARD COLLABORATOR MODEL
-// ============================================================
-
-const CollaboratorModel = {
-  // Get collaborators for a board
-  findByBoard: async (boardId) => {
     const result = await query(
-      `SELECT u.id, u.username, u.email, u.avatar_url, bc.permission, bc.created_at
-       FROM board_collaborators bc
-       JOIN users u ON bc.user_id = u.id
-       WHERE bc.board_id = $1`,
-      [boardId],
-    );
-    return result.rows;
-  },
-
-  // Add or update collaborator
-  upsert: async ({ id, boardId, userId, permission, invitedBy }) => {
-    await query(
-      `INSERT INTO board_collaborators (id, board_id, user_id, permission, invited_by, created_at)
-       VALUES ($1, $2, $3, $4, $5, NOW())
-       ON CONFLICT (board_id, user_id) DO UPDATE SET permission = $4`,
-      [id, boardId, userId, permission, invitedBy],
-    );
-  },
-
-  // Remove collaborator
-  remove: async (boardId, userId) => {
-    await query(
-      "DELETE FROM board_collaborators WHERE board_id = $1 AND user_id = $2",
-      [boardId, userId],
-    );
-  },
-
-  // Check if user is collaborator
-  isCollaborator: async (boardId, userId) => {
-    const result = await query(
-      "SELECT permission FROM board_collaborators WHERE board_id = $1 AND user_id = $2",
-      [boardId, userId],
+      "DELETE FROM library_items WHERE id = $1 AND user_id = $2 RETURNING id",
+      [id, userId],
     );
     return result.rows[0] || null;
   },
 };
 
+// ============================================================
+// EXPORTS
+// ============================================================
 module.exports = {
   UserModel,
   BoardModel,
+  AdminModel,
   SubscriptionModel,
   PaymentModel,
+  AIUsageModel,
   NotificationModel,
   ActivityLogModel,
-  AIUsageModel,
-  AdminModel,
   SiteSettingsModel,
-  LibraryModel,
-  CollaboratorModel,
+  LibraryItemModel,
 };
