@@ -36,7 +36,7 @@ import AdminAdmins from "./pages/admin/AdminAdmins";
 import AdminSettings from "./pages/admin/AdminSettings";
 import AdminActivity from "./pages/admin/AdminActivity";
 import AcceptInvitation from "./pages/admin/AcceptInvitation";
-
+import Library from "./pages/library/Library";
 /* ─────────────────────────────────────────────────────────────
    Route Guards
 ───────────────────────────────────────────────────────────── */
@@ -124,7 +124,7 @@ export default function App() {
           <Route element={<MainLayout />}>
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/boards" element={<Dashboard />} />
-            <Route path="/library" element={<Dashboard showLibrary />} />
+            <Route path="/library" element={<Library />} />
             <Route path="/billing" element={<Billing />} />
             <Route path="/profile" element={<Profile />} />
             <Route path="/payment/success" element={<Payment />} />
