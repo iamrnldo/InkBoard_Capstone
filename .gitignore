@@ -9,8 +9,11 @@ frontend/node_modules/.cache/
 backend/.env
 backend/.env.local
 backend/.env.production
+backend/.env.example
+
 
 .env
+.env.example
 .env.local
 .env.production
 
