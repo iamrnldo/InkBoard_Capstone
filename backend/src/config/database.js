@@ -1,4 +1,3 @@
-// backend/src/config/database.js
 const { Pool } = require("pg");
 require("dotenv").config();
 
@@ -11,10 +10,11 @@ const pool = new Pool({
   max: 20,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,
-  // ✅ WAJIB untuk Koyeb PostgreSQL
-  ssl: process.env.NODE_ENV === "production"
-    ? { rejectUnauthorized: false }
-    : false,
+  // ✅ Required for Koyeb PostgreSQL
+  ssl:
+    process.env.NODE_ENV === "production"
+      ? { rejectUnauthorized: false }
+      : false,
 });
 
 pool.on("connect", () => {
@@ -92,4 +92,3 @@ module.exports = { query, getClient, pool };
 // const getClient = () => pool.connect();
 
 // module.exports = { query, getClient, pool };
-
