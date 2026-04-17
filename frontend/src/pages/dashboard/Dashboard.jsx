@@ -151,7 +151,7 @@
     /* ── Grid mode ── */
     return (
       <div
-        className="card overflow-hidden hover:shadow-lg transition-all duration-200
+        className="card hover:shadow-lg transition-all duration-200
                   cursor-pointer group flex flex-col"
         onClick={() => navigate(`/board/${board.id}`)}
       >

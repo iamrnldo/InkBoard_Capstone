@@ -24,7 +24,7 @@ const PLANS = [
   {
     id: "pro",
     name: "Pro",
-    price: 15000,
+    price: 500,
     icon: Zap,
     color: "from-blue-500 to-cyan-500",
     popular: true,
