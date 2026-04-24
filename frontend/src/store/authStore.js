@@ -1,3 +1,4 @@
+// src/store/authStore.js
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { authAPI } from "../api";
@@ -10,7 +11,24 @@ const useAuthStore = create(
       refreshToken: null,
       isLoading: false,
       isAuth: false,
+      theme: localStorage.getItem("theme") || "light",
 
+      /* ── Theme ── */
+      setTheme: (theme) => {
+        localStorage.setItem("theme", theme);
+        document.documentElement.classList.toggle("dark", theme === "dark");
+        set({ theme });
+      },
+
+      toggleTheme: () => {
+        const current = get().theme;
+        const next = current === "dark" ? "light" : "dark";
+        localStorage.setItem("theme", next);
+        document.documentElement.classList.toggle("dark", next === "dark");
+        set({ theme: next });
+      },
+
+      /* ── Tokens ── */
       setTokens: (accessToken, refreshToken) => {
         localStorage.setItem("accessToken", accessToken);
         localStorage.setItem("refreshToken", refreshToken);
@@ -19,6 +37,7 @@ const useAuthStore = create(
 
       setUser: (user) => set({ user, isAuth: !!user }),
 
+      /* ── Login ── */
       login: async (email, password) => {
         set({ isLoading: true });
         try {
@@ -43,6 +62,7 @@ const useAuthStore = create(
         }
       },
 
+      /* ── Register ── */
       register: async (username, email, password) => {
         set({ isLoading: true });
         try {
@@ -58,6 +78,7 @@ const useAuthStore = create(
         }
       },
 
+      /* ── Logout ── */
       logout: async () => {
         try {
           await authAPI.logout();
@@ -72,6 +93,7 @@ const useAuthStore = create(
         });
       },
 
+      /* ── Fetch current user ── */
       fetchMe: async () => {
         const token = localStorage.getItem("accessToken");
         if (!token) {
@@ -96,6 +118,7 @@ const useAuthStore = create(
         accessToken: s.accessToken,
         refreshToken: s.refreshToken,
         isAuth: s.isAuth,
+        theme: s.theme,
       }),
     },
   ),

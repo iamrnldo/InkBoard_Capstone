@@ -55,7 +55,7 @@ export default function Login() {
           onChange={(e) => setForm({ ...form, email: e.target.value })}
           error={errors.email}
         />
-        <div>
+        <div className="relative">
           <Input
             label="Password"
             type={showPw ? "text" : "password"}
@@ -64,17 +64,13 @@ export default function Login() {
             value={form.password}
             onChange={(e) => setForm({ ...form, password: e.target.value })}
             error={errors.password}
+            className="pr-10"
           />
           <button
             type="button"
             onClick={() => setShowPw((p) => !p)}
-            className="absolute right-3 top-9 text-gray-400 hover:text-gray-600"
-            style={{
-              position: "relative",
-              float: "right",
-              marginTop: "-28px",
-              marginRight: "8px",
-            }}
+            className="absolute right-3 top-[38px] text-gray-400 hover:text-gray-600 
+               dark:hover:text-gray-300 transition-colors"
           >
             {showPw ? (
               <EyeOff className="w-4 h-4" />

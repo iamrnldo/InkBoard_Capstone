@@ -1,3 +1,4 @@
+// src/components/layout/Navbar.jsx
 import React, { useState, useRef, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
@@ -17,19 +18,18 @@ import { generateAvatarUrl, getPlanBadge, timeAgo } from "../../utils/helpers";
 import toast from "react-hot-toast";
 
 export default function Navbar({ onMenuToggle }) {
-  const { user, logout } = useAuthStore();
+  const { user, logout, theme, toggleTheme } = useAuthStore();
   const navigate = useNavigate();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
-  const [darkMode, setDarkMode] = useState(() =>
-    document.documentElement.classList.contains("dark"),
-  );
   const dropRef = useRef(null);
   const notifRef = useRef(null);
 
-  /* ── close on outside click ── */
+  const darkMode = theme === "dark";
+
+  /* ── Close on outside click ── */
   useEffect(() => {
     const handler = (e) => {
       if (dropRef.current && !dropRef.current.contains(e.target))
@@ -41,24 +41,17 @@ export default function Navbar({ onMenuToggle }) {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  /* ── notifications ── */
+  /* ── Fetch notifications ── */
   useEffect(() => {
     if (!user) return;
     userAPI
       .getNotifications()
       .then(({ data }) => {
-        setNotifications(data.data.notifications);
-        setUnreadCount(data.data.unread_count);
+        setNotifications(data.data.notifications || []);
+        setUnreadCount(data.data.unread_count || 0);
       })
       .catch(() => {});
   }, [user]);
-
-  const toggleDark = () => {
-    const next = !darkMode;
-    setDarkMode(next);
-    document.documentElement.classList.toggle("dark", next);
-    localStorage.setItem("theme", next ? "dark" : "light");
-  };
 
   const handleLogout = async () => {
     await logout();
@@ -77,15 +70,16 @@ export default function Navbar({ onMenuToggle }) {
   const plan = getPlanBadge(user?.plan);
 
   return (
-    <nav className="h-14 glass border-b border-gray-200 dark:border-gray-700 flex items-center px-4 gap-3 z-30">
-      {/* ── left ── */}
+    <nav className="h-14 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 flex items-center px-4 gap-3 sticky top-0 z-30">
+      {/* Menu toggle (mobile) */}
       <button
         onClick={onMenuToggle}
         className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors lg:hidden"
       >
-        <Menu className="w-5 h-5" />
+        <Menu className="w-5 h-5 text-gray-600 dark:text-gray-400" />
       </button>
 
+      {/* Logo */}
       <Link to="/dashboard" className="flex items-center gap-2 mr-4">
         <div className="w-7 h-7 rounded-lg gradient-brand flex items-center justify-center">
           <span className="text-white text-sm">✏️</span>
@@ -97,35 +91,38 @@ export default function Navbar({ onMenuToggle }) {
 
       <div className="flex-1" />
 
-      {/* ── right actions ── */}
-      {/* dark mode */}
+      {/* Dark mode toggle */}
       <button
-        onClick={toggleDark}
-        className="p-2 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-gray-500 dark:text-gray-400"
+        onClick={toggleTheme}
+        className="p-2 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800
+                   transition-colors text-gray-500 dark:text-gray-400"
+        title={darkMode ? "Switch to Light Mode" : "Switch to Dark Mode"}
       >
-        {darkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+        {darkMode ? (
+          <Sun className="w-4 h-4 text-yellow-500" />
+        ) : (
+          <Moon className="w-4 h-4" />
+        )}
       </button>
 
-      {/* notifications */}
+      {/* Notifications */}
       <div ref={notifRef} className="relative">
         <button
           onClick={() => setNotifOpen((o) => !o)}
-          className="relative p-2 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-gray-500 dark:text-gray-400"
+          className="relative p-2 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800
+                     transition-colors text-gray-500 dark:text-gray-400"
         >
           <Bell className="w-4 h-4" />
           {unreadCount > 0 && (
-            <span
-              className="absolute top-1 right-1 w-4 h-4 bg-red-500 text-white text-[10px]
-                             rounded-full flex items-center justify-center font-bold"
-            >
+            <span className="absolute top-1 right-1 w-4 h-4 bg-red-500 text-white text-[10px] rounded-full flex items-center justify-center font-bold">
               {unreadCount > 9 ? "9+" : unreadCount}
             </span>
           )}
         </button>
 
         {notifOpen && (
-          <div className="absolute right-0 top-full mt-2 w-80 card shadow-xl animate-slide-in overflow-hidden">
-            <div className="px-4 py-3 border-b border-gray-100 dark:border-gray-700 font-semibold text-sm">
+          <div className="absolute right-0 top-full mt-2 w-80 bg-white dark:bg-gray-800 rounded-2xl shadow-xl border border-gray-100 dark:border-gray-700 animate-slide-in overflow-hidden z-50">
+            <div className="px-4 py-3 border-b border-gray-100 dark:border-gray-700 font-semibold text-sm text-gray-800 dark:text-gray-200">
               Notifications
             </div>
             <div className="max-h-72 overflow-y-auto divide-y divide-gray-100 dark:divide-gray-700">
@@ -139,11 +136,11 @@ export default function Navbar({ onMenuToggle }) {
                     key={n.id}
                     onClick={() => !n.is_read && markRead(n.id)}
                     className={`px-4 py-3 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors
-                              ${!n.is_read ? "bg-primary-50/50 dark:bg-primary-900/10" : ""}`}
+                                ${!n.is_read ? "bg-primary-50/50 dark:bg-primary-900/10" : ""}`}
                   >
                     <div className="flex items-start gap-2">
                       {!n.is_read && (
-                        <div className="w-2 h-2 mt-1 rounded-full bg-primary-500 flex-shrink-0" />
+                        <div className="w-2 h-2 mt-1.5 rounded-full bg-primary-500 flex-shrink-0" />
                       )}
                       <div className={!n.is_read ? "" : "ml-4"}>
                         <p className="text-sm font-medium text-gray-800 dark:text-gray-200">
@@ -165,7 +162,7 @@ export default function Navbar({ onMenuToggle }) {
         )}
       </div>
 
-      {/* user dropdown */}
+      {/* User dropdown */}
       <div ref={dropRef} className="relative">
         <button
           onClick={() => setDropdownOpen((o) => !o)}
@@ -189,7 +186,7 @@ export default function Navbar({ onMenuToggle }) {
         </button>
 
         {dropdownOpen && (
-          <div className="absolute right-0 top-full mt-2 w-52 card shadow-xl animate-slide-in overflow-hidden">
+          <div className="absolute right-0 top-full mt-2 w-52 bg-white dark:bg-gray-800 rounded-2xl shadow-xl border border-gray-100 dark:border-gray-700 animate-slide-in overflow-hidden z-50">
             <div className="px-4 py-3 border-b border-gray-100 dark:border-gray-700">
               <p className="text-sm font-semibold text-gray-800 dark:text-gray-200 truncate">
                 {user?.username}
@@ -209,7 +206,7 @@ export default function Navbar({ onMenuToggle }) {
                 icon={Settings}
                 label="Settings"
                 onClick={() => {
-                  navigate("/profile#settings");
+                  navigate("/profile");
                   setDropdownOpen(false);
                 }}
               />
@@ -242,8 +239,8 @@ function MenuItem({ icon: Icon, label, onClick, danger = false }) {
   return (
     <button
       onClick={onClick}
-      className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium
-                  transition-colors ${
+      className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors
+                  ${
                     danger
                       ? "text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20"
                       : "text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"

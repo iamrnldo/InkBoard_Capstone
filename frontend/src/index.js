@@ -4,14 +4,15 @@ import ReactDOM from "react-dom/client";
 import "./index.css";
 import App from "./App";
 
-// Apply saved theme before paint
-const savedTheme = localStorage.getItem("theme");
-if (
-  savedTheme === "dark" ||
-  (!savedTheme && window.matchMedia("(prefers-color-scheme: dark)").matches)
-) {
-  document.documentElement.classList.add("dark");
-}
+// ── Apply theme before first paint (prevent flash) ────────
+const applyTheme = () => {
+  const saved = localStorage.getItem("theme");
+  const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  const isDark = saved === "dark" || (!saved && prefersDark);
+  document.documentElement.classList.toggle("dark", isDark);
+};
+
+applyTheme();
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(

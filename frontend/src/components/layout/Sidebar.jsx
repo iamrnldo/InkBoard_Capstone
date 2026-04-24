@@ -16,7 +16,6 @@ import toast from "react-hot-toast";
 
 const NAV = [
   { to: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
-  { to: "/boards", icon: PenTool, label: "My Boards" },
   { to: "/library", icon: BookOpen, label: "Library" },
   { to: "/billing", icon: CreditCard, label: "Billing" },
   { to: "/profile", icon: Settings, label: "Settings" },
