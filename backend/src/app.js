@@ -3,6 +3,7 @@ const cors = require("cors");
 const helmet = require("helmet");
 const morgan = require("morgan");
 const compression = require("compression");
+const path = require("path"); 
 const passport = require("./config/passport");
 const http = require("http");
 const { Server } = require("socket.io");
@@ -17,6 +18,8 @@ const io = new Server(server, {
     credentials: true,
   },
 });
+
+app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 
 // Middleware
 app.use(helmet({ contentSecurityPolicy: false }));

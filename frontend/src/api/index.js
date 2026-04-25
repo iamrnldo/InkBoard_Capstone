@@ -100,6 +100,12 @@ export const boardAPI = {
 export const userAPI = {
   getProfile: () => api.get("/user/profile"),
   updateProfile: (d) => api.put("/user/profile", d),
+  uploadAvatar: (
+    formData, // ← ADD THIS
+  ) =>
+    api.post("/user/profile/avatar", formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+    }),
   updatePreferences: (d) => api.put("/user/preferences", d),
   changePassword: (d) => api.put("/user/password", d),
   createPayment: (d) => api.post("/user/payment/create", d),
