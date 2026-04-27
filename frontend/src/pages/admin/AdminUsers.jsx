@@ -85,7 +85,7 @@ function UserDetailModal({ userId, onClose, onUpdate }) {
       ) : (
         <div className="space-y-6">
           {/* User info */}
-          <div className="flex items-center gap-4 p-4 bg-gray-50 dark:bg-gray-750 rounded-xl">
+          <div className="flex items-center gap-4 p-4 bg-slate-100 dark:bg-slate-300  rounded-xl">
             <img
               src={
                 detail.user.avatar_url ||
@@ -95,13 +95,13 @@ function UserDetailModal({ userId, onClose, onUpdate }) {
               className="w-14 h-14 rounded-2xl"
             />
             <div>
-              <p className="font-bold text-gray-900 dark:text-white text-lg">
+              <p className="font-bold text-gray-900 dark:text-slate-700 text-lg">
                 {detail.user.username}
               </p>
-              <p className="text-gray-500 dark:text-gray-400 text-sm">
+              <p className="text-gray-500 dark:text-gray-600 text-sm">
                 {detail.user.email}
               </p>
-              <p className="text-xs text-gray-400 mt-1">
+              <p className="text-xs text-gray-600 mt-1">
                 Joined {formatDate(detail.user.created_at)}
               </p>
             </div>

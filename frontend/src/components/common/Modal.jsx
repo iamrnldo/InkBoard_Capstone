@@ -1,4 +1,6 @@
+// src/components/common/Modal.jsx
 import React, { useEffect } from "react";
+import { createPortal } from "react-dom"; // tambah ini
 import { X } from "lucide-react";
 
 export default function Modal({
@@ -31,10 +33,11 @@ export default function Modal({
 
   if (!isOpen) return null;
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+  // Pakai createPortal agar modal keluar dari stacking context manapun
+  return createPortal(
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
       <div
-        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+        className="absolute inset-0 bg-black/50 backdrop-blur-lg"
         onClick={onClose}
       />
       <div
@@ -61,6 +64,7 @@ export default function Modal({
         )}
         <div className="p-6">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body, // render langsung ke body, bypass semua stacking context
   );
 }
