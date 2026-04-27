@@ -28,6 +28,7 @@ import LoadingSpinner, {
   PageLoader,
 } from "../../components/common/LoadingSpinner";
 import CollaboratorCursors from "../../components/board/CollaboratorCursors";
+import ThumbnailCapture from "../../components/board/ThumbnailCapture";
 import { generateAvatarUrl, canUseAI, canShareEdit } from "../../utils/helpers";
 import toast from "react-hot-toast";
 
@@ -39,21 +40,15 @@ const SOCKET_URL = process.env.REACT_APP_SOCKET_URL || "http://localhost:5000";
 
 /* ─────────────────────────────────────────────────────────────
    Helper: sanitize appState agar aman untuk Excalidraw
-   - collaborators harus Map (bukan object/array)
-   - buang field yang bisa bikin crash
 ───────────────────────────────────────────────────────────── */
 function sanitizeAppState(appState = {}) {
-  // Collaborators HARUS berupa Map
   let collaborators = appState.collaborators;
 
   if (!collaborators || Array.isArray(collaborators)) {
-    // Array atau null → konversi ke Map kosong
     collaborators = new Map();
   } else if (collaborators instanceof Map) {
-    // Sudah Map → biarkan
     collaborators = collaborators;
   } else if (typeof collaborators === "object") {
-    // Plain object → konversi ke Map
     try {
       collaborators = new Map(Object.entries(collaborators));
     } catch (_) {
@@ -64,12 +59,9 @@ function sanitizeAppState(appState = {}) {
   }
 
   return {
-    // Safe defaults
     viewBackgroundColor: appState.viewBackgroundColor ?? "#ffffff",
     currentItemFontFamily: appState.currentItemFontFamily ?? 1,
-    // Spread sisanya tapi timpa collaborators
     ...appState,
-    // WAJIB Map
     collaborators,
   };
 }
@@ -436,6 +428,8 @@ export default function BoardEditor() {
 
   const socketRef = useRef(null);
   const titleRef = useRef(null);
+  // ── ref ke wrapper canvas — dipakai ThumbnailCapture untuk screenshot ──
+  const canvasWrapperRef = useRef(null);
 
   /* ── Socket.io ── */
   useEffect(() => {
@@ -476,8 +470,6 @@ export default function BoardEditor() {
   /* ── Canvas onChange ── */
   const handleChange = useCallback(
     (elements, appState, files) => {
-      // Strip collaborators (Map) sebelum simpan ke DB
-      // karena Map tidak bisa di-JSON.stringify dengan benar
       const { collaborators: _c, ...safeAppState } = appState;
       const canvasData = { elements, appState: safeAppState, files };
       scheduleAutoSave(canvasData);
@@ -495,7 +487,6 @@ export default function BoardEditor() {
           const elements = excalidrawAPI.getSceneElements();
           const appState = excalidrawAPI.getAppState();
           const files = excalidrawAPI.getFiles();
-          // Strip collaborators sebelum save
           const { collaborators: _c, ...safeAppState } = appState;
           saveNow({ elements, appState: safeAppState, files });
         }
@@ -534,7 +525,6 @@ export default function BoardEditor() {
   /* ── Build safe initialData ── */
   const initialData = {
     elements: board.canvas_data?.elements ?? [],
-    // ✅ Sanitize appState: pastikan collaborators adalah Map
     appState: sanitizeAppState(board.canvas_data?.appState ?? {}),
     files: board.canvas_data?.files ?? {},
   };
@@ -542,7 +532,9 @@ export default function BoardEditor() {
   return (
     <div className="fixed inset-0 flex flex-col bg-white dark:bg-gray-950">
       {/* ── Top Bar ── */}
+      {/* data-thumbnail-ignore: toolbar tidak ikut ter-capture */}
       <div
+        data-thumbnail-ignore="true"
         className="h-12 bg-white dark:bg-gray-900 border-b border-gray-200
                       dark:border-gray-700 flex items-center px-3 gap-2 z-20 flex-shrink-0"
       >
@@ -683,7 +675,12 @@ export default function BoardEditor() {
 
       {/* ── Canvas + AI Panel ── */}
       <div className="flex-1 flex overflow-hidden relative">
-        <div className="flex-1 min-w-0 relative">
+        {/* Canvas wrapper — INI yang akan di-screenshot oleh ThumbnailCapture */}
+        <div
+          id="board-canvas-root"
+          ref={canvasWrapperRef}
+          className="flex-1 min-w-0 relative"
+        >
           <Suspense fallback={<PageLoader />}>
             <ExcalidrawComponent
               ref={setExcalidrawAPI}
@@ -717,6 +714,15 @@ export default function BoardEditor() {
           />
         )}
       </div>
+
+      {/* ── Auto Thumbnail Capture (invisible) ── */}
+      {/* Hanya aktif jika punya hak edit, tidak screenshot board orang lain */}
+      <ThumbnailCapture
+        boardId={id}
+        targetRef={canvasWrapperRef}
+        idleMs={6000}
+        enabled={!isReadOnly}
+      />
 
       {/* Modals */}
       {showShare && (

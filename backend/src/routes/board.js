@@ -1,3 +1,4 @@
+// backend/src/routes/board.js
 const express = require("express");
 const router = express.Router();
 const boardController = require("../controllers/boardController");
@@ -27,6 +28,15 @@ router.delete(
   "/:id/collaborators/:userId",
   authenticateToken,
   boardController.removeCollaborator,
+);
+
+// ── Thumbnail auto-capture ──────────────────────────────────
+// uploadThumbnailMiddleware = multer, harus sebelum controller
+router.post(
+  "/:id/thumbnail",
+  authenticateToken,
+  boardController.uploadThumbnailMiddleware,
+  boardController.uploadThumbnail,
 );
 
 module.exports = router;

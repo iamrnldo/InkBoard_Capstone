@@ -1,6 +1,10 @@
+// backend/src/controllers/boardController.js
 const { query } = require("../config/database");
 const { v4: uuidv4 } = require("uuid");
 const crypto = require("crypto");
+const multer = require("multer");
+const path = require("path");
+const fs = require("fs");
 
 const PLAN_LIMITS = {
   lite: { boards: 1, share_access: false, share_view: true },
@@ -8,6 +12,37 @@ const PLAN_LIMITS = {
   premium: { boards: -1, share_access: true, share_view: true },
 };
 
+/* ─────────────────────────────────────────────────────────────
+   Multer — thumbnail upload
+───────────────────────────────────────────────────────────── */
+const thumbnailStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const dir = path.join(__dirname, "../../uploads/thumbnails");
+    fs.mkdirSync(dir, { recursive: true });
+    cb(null, dir);
+  },
+  filename: (req, file, cb) => {
+    // thumb_<boardId>_<timestamp>.jpg — satu board satu nama file (overwrite lama)
+    cb(null, `thumb_${req.params.id}_${Date.now()}.jpg`);
+  },
+});
+
+const thumbnailUpload = multer({
+  storage: thumbnailStorage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB
+  fileFilter: (req, file, cb) => {
+    if (!file.mimetype.startsWith("image/")) {
+      return cb(new Error("Images only"));
+    }
+    cb(null, true);
+  },
+});
+
+exports.uploadThumbnailMiddleware = thumbnailUpload.single("thumbnail");
+
+/* ─────────────────────────────────────────────────────────────
+   GET /boards
+───────────────────────────────────────────────────────────── */
 exports.getBoards = async (req, res) => {
   try {
     const { page = 1, limit = 20, search = "", archived = false } = req.query;
@@ -53,6 +88,9 @@ exports.getBoards = async (req, res) => {
   }
 };
 
+/* ─────────────────────────────────────────────────────────────
+   POST /boards
+───────────────────────────────────────────────────────────── */
 exports.createBoard = async (req, res) => {
   try {
     const {
@@ -110,6 +148,9 @@ exports.createBoard = async (req, res) => {
   }
 };
 
+/* ─────────────────────────────────────────────────────────────
+   GET /boards/:id
+───────────────────────────────────────────────────────────── */
 exports.getBoard = async (req, res) => {
   try {
     const { id } = req.params;
@@ -157,6 +198,9 @@ exports.getBoard = async (req, res) => {
   }
 };
 
+/* ─────────────────────────────────────────────────────────────
+   PUT /boards/:id
+───────────────────────────────────────────────────────────── */
 exports.updateBoard = async (req, res) => {
   try {
     const { id } = req.params;
@@ -235,6 +279,9 @@ exports.updateBoard = async (req, res) => {
   }
 };
 
+/* ─────────────────────────────────────────────────────────────
+   DELETE /boards/:id
+───────────────────────────────────────────────────────────── */
 exports.deleteBoard = async (req, res) => {
   try {
     const { id } = req.params;
@@ -254,6 +301,9 @@ exports.deleteBoard = async (req, res) => {
   }
 };
 
+/* ─────────────────────────────────────────────────────────────
+   POST /boards/:id/share
+───────────────────────────────────────────────────────────── */
 exports.shareBoard = async (req, res) => {
   try {
     const { id } = req.params;
@@ -298,6 +348,9 @@ exports.shareBoard = async (req, res) => {
   }
 };
 
+/* ─────────────────────────────────────────────────────────────
+   GET /boards/share/:token
+───────────────────────────────────────────────────────────── */
 exports.getSharedBoard = async (req, res) => {
   try {
     const { token } = req.params;
@@ -321,6 +374,9 @@ exports.getSharedBoard = async (req, res) => {
   }
 };
 
+/* ─────────────────────────────────────────────────────────────
+   POST /boards/:id/collaborators
+───────────────────────────────────────────────────────────── */
 exports.addCollaborator = async (req, res) => {
   try {
     const { id } = req.params;
@@ -356,12 +412,10 @@ exports.addCollaborator = async (req, res) => {
 
     const collaboratorId = userResult.rows[0].id;
     if (collaboratorId === req.user.id) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "Cannot add yourself as collaborator",
-        });
+      return res.status(400).json({
+        success: false,
+        message: "Cannot add yourself as collaborator",
+      });
     }
 
     await query(
@@ -378,6 +432,9 @@ exports.addCollaborator = async (req, res) => {
   }
 };
 
+/* ─────────────────────────────────────────────────────────────
+   DELETE /boards/:id/collaborators/:userId
+───────────────────────────────────────────────────────────── */
 exports.removeCollaborator = async (req, res) => {
   try {
     const { id, userId } = req.params;
@@ -402,6 +459,9 @@ exports.removeCollaborator = async (req, res) => {
   }
 };
 
+/* ─────────────────────────────────────────────────────────────
+   POST /boards/:id/duplicate
+───────────────────────────────────────────────────────────── */
 exports.duplicateBoard = async (req, res) => {
   try {
     const { id } = req.params;
@@ -414,13 +474,11 @@ exports.duplicateBoard = async (req, res) => {
         [req.user.id],
       );
       if (parseInt(boardCount.rows[0].count) >= planLimit.boards) {
-        return res
-          .status(403)
-          .json({
-            success: false,
-            message: "Board limit reached",
-            upgradeRequired: true,
-          });
+        return res.status(403).json({
+          success: false,
+          message: "Board limit reached",
+          upgradeRequired: true,
+        });
       }
     }
 
@@ -451,6 +509,59 @@ exports.duplicateBoard = async (req, res) => {
     res.status(201).json({ success: true, data: result.rows[0] });
   } catch (error) {
     console.error("Duplicate board error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+/* ─────────────────────────────────────────────────────────────
+   POST /boards/:id/thumbnail
+   Upload & simpan thumbnail hasil capture canvas
+───────────────────────────────────────────────────────────── */
+exports.uploadThumbnail = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res
+        .status(400)
+        .json({ success: false, message: "No file uploaded" });
+    }
+
+    const { id } = req.params;
+
+    // Hanya owner yang bisa update thumbnail
+    const boardCheck = await query(
+      "SELECT * FROM boards WHERE id = $1 AND user_id = $2 AND is_deleted = false",
+      [id, req.user.id],
+    );
+    if (boardCheck.rows.length === 0) {
+      // Hapus file yang sudah ter-upload karena tidak authorized
+      fs.unlink(req.file.path, () => {});
+      return res
+        .status(404)
+        .json({ success: false, message: "Board not found" });
+    }
+
+    // Hapus file thumbnail lama agar disk tidak penuh
+    const oldUrl = boardCheck.rows[0].thumbnail_url;
+    if (oldUrl && oldUrl.includes("/uploads/thumbnails/")) {
+      const oldFile = path.join(
+        __dirname,
+        "../../uploads/thumbnails",
+        path.basename(oldUrl),
+      );
+      fs.unlink(oldFile, () => {}); // fire-and-forget
+    }
+
+    const backendUrl = process.env.BACKEND_URL || "http://localhost:5000";
+    const thumbnailUrl = `${backendUrl}/uploads/thumbnails/${req.file.filename}`;
+
+    await query(
+      "UPDATE boards SET thumbnail_url = $1, updated_at = NOW() WHERE id = $2",
+      [thumbnailUrl, id],
+    );
+
+    res.json({ success: true, data: { thumbnail_url: thumbnailUrl } });
+  } catch (error) {
+    console.error("Upload thumbnail error:", error);
     res.status(500).json({ success: false, message: "Server error" });
   }
 };

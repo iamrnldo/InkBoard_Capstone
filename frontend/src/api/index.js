@@ -91,6 +91,10 @@ export const boardAPI = {
   shareBoard: (id, d) => api.post(`/boards/${id}/share`, d),
   getSharedBoard: (token) => api.get(`/boards/share/${token}`),
   duplicateBoard: (id) => api.post(`/boards/${id}/duplicate`),
+  uploadThumbnail: (id, formData) =>
+    api.post(`/boards/${id}/thumbnail`, formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+    }),
   addCollaborator: (id, d) => api.post(`/boards/${id}/collaborators`, d),
   removeCollaborator: (id, uid) =>
     api.delete(`/boards/${id}/collaborators/${uid}`),
