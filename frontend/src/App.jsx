@@ -14,6 +14,7 @@ import Navbar from "./components/layout/Navbar";
 import Sidebar from "./components/layout/Sidebar";
 
 /* ── Pages ── */
+import LandingPage from "./pages/LandingPage";
 import Login from "./pages/auth/Login";
 import Register from "./pages/auth/Register";
 import VerifyEmail from "./pages/auth/VerifyEmail";
@@ -40,6 +41,7 @@ import Library from "./pages/library/Library";
 /* ─────────────────────────────────────────────────────────────
    Route Guards
 ───────────────────────────────────────────────────────────── */
+
 function PrivateRoute() {
   const { isAuth, user } = useAuthStore();
   if (!isAuth || !user) return <Navigate to="/login" replace />;
@@ -107,6 +109,7 @@ export default function App() {
       <Routes>
         {/* ── Public only ── */}
         <Route element={<PublicOnlyRoute />}>
+          <Route path="/" element={<LandingPage />} />;
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
