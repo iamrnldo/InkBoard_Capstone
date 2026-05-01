@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import useAuthStore from "../../store/authStore";
 import toast from "react-hot-toast";
+import inkboardLogo from "../../assets/logo/inkboard_logo.png";
 
 const NAV = [
   { to: "/admin", icon: LayoutDashboard, label: "Dashboard", exact: true },
@@ -86,24 +87,13 @@ export default function AdminLayout() {
         `}
       >
         {/* Logo */}
-        <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-200 dark:border-gray-700">
-          <div className="w-8 h-8 rounded-xl gradient-brand flex items-center justify-center flex-shrink-0">
-            <span className="text-white text-sm">✏️</span>
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="font-bold text-sm text-gray-900 dark:text-white">
-              Inkboard
-            </p>
-            <p className="text-[11px] text-gray-500 dark:text-gray-400">
-              Admin Panel
-            </p>
-          </div>
-          <button
-            onClick={() => setSidebarOpen(false)}
-            className="lg:hidden text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 p-1 transition-colors"
-          >
-            <X className="w-4 h-4" />
-          </button>
+        <div className="flex items-center justify-between px-2 py-4 border-b border-gray-200 dark:border-gray-700">
+          <img
+            src={inkboardLogo}
+            alt="Inkboard"
+            className="h-full w-auto object-contain"
+            style={{ background: "transparent" }}
+          />
         </div>
 
         {/* Navigation */}
@@ -206,15 +196,15 @@ export default function AdminLayout() {
             onClick={() => setSidebarOpen(true)}
             className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
           >
-            <Menu className="w-5 h-5 text-gray-600 dark:text-gray-400" />
+            <Menu className="w-auto h-full text-gray-600 dark:text-gray-400" />
           </button>
           <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded-lg gradient-brand flex items-center justify-center">
-              <span className="text-white text-xs">✏️</span>
-            </div>
-            <span className="font-bold text-gray-900 dark:text-white text-sm">
-              Admin Panel
-            </span>
+            <img
+              src={inkboardLogo}
+              alt="Inkboard"
+              className="h-12 w-auto object-contain"
+              style={{ background: "transparent" }}
+            />
           </div>
           {/* Dark mode toggle (mobile) */}
           <button

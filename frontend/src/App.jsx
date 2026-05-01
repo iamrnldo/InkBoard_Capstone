@@ -45,6 +45,7 @@ import Library from "./pages/library/Library";
 function PrivateRoute() {
   const { isAuth, user } = useAuthStore();
   if (!isAuth || !user) return <Navigate to="/login" replace />;
+  if (user.isAdmin) return <Navigate to="/admin" replace />; // ← tambah ini
   return <Outlet />;
 }
 

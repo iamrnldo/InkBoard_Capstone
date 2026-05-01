@@ -6,6 +6,8 @@ import Input from "../../components/common/Input";
 import Button from "../../components/common/Button";
 import toast from "react-hot-toast";
 
+import inkboardLogo from "../../assets/logo/inkboard_logo.png";
+
 export default function Login() {
   const navigate = useNavigate();
   const { login, isLoading } = useAuthStore();
@@ -173,6 +175,7 @@ function OAuthBtn({ provider, onClick }) {
   );
 }
 
+// Ubah bagian logo di AuthLayout:
 export function AuthLayout({ title, subtitle, children }) {
   return (
     <div
@@ -183,9 +186,12 @@ export function AuthLayout({ title, subtitle, children }) {
       <div className="w-full max-w-md">
         {/* logo */}
         <div className="text-center mb-8">
-          <div className="inline-flex w-14 h-14 rounded-2xl gradient-brand items-center justify-center mb-4 shadow-lg">
-            <span className="text-white text-2xl">✏️</span>
-          </div>
+          <img
+            src={inkboardLogo}
+            alt="Inkboard"
+            className="h-16 w-auto object-contain mx-auto mb-4"
+            style={{ background: "transparent" }}
+          />
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
             {title}
           </h1>

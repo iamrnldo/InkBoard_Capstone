@@ -83,12 +83,11 @@ export default function Navbar({ onMenuToggle }) {
 
       {/* Logo */}
       <Link to="/dashboard" className="flex items-center gap-2 mr-4">
-        
-        <div className="w-auto h-full overflow-hidden  flex items-center justify-center ">
+        <div className="w-auto flex items-center justify-center">
           <img
             src={inkboardLogo}
             alt="Inkboard"
-            className="h-20 w-auto object-contain"
+            className="h-12 w-auto object-contain"
             style={{ background: "transparent" }}
           />
         </div>
