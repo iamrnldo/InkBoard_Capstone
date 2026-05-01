@@ -17,6 +17,8 @@ import { userAPI } from "../../api";
 import { generateAvatarUrl, getPlanBadge, timeAgo } from "../../utils/helpers";
 import toast from "react-hot-toast";
 
+import inkboardLogo from "../../assets/logo/inkboard_logo.png";
+
 export default function Navbar({ onMenuToggle }) {
   const { user, logout, theme, toggleTheme } = useAuthStore();
   const navigate = useNavigate();
@@ -81,12 +83,15 @@ export default function Navbar({ onMenuToggle }) {
 
       {/* Logo */}
       <Link to="/dashboard" className="flex items-center gap-2 mr-4">
-        <div className="w-7 h-7 rounded-lg gradient-brand flex items-center justify-center">
-          <span className="text-white text-sm">✏️</span>
+        
+        <div className="w-auto h-full overflow-hidden  flex items-center justify-center ">
+          <img
+            src={inkboardLogo}
+            alt="Inkboard"
+            className="h-20 w-auto object-contain"
+            style={{ background: "transparent" }}
+          />
         </div>
-        <span className="font-bold text-gray-900 dark:text-white hidden sm:block">
-          Inkboard
-        </span>
       </Link>
 
       <div className="flex-1" />
