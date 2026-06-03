@@ -15,6 +15,7 @@ import {
   Sparkles,
   MousePointer2,
 } from "lucide-react";
+import inkboardLogo from "../assets/logo/inkboard_logo.png";
 
 /* ── useInView hook for scroll-triggered animations ── */
 function useInView(options = {}) {
@@ -752,15 +753,14 @@ export default function LandingPage() {
           className="flex items-center gap-2.5 group cursor-pointer"
           onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
         >
-          <div
-            className="w-8 h-8 rounded-xl flex items-center justify-center transition-transform duration-300 group-hover:scale-110 group-hover:rotate-6"
-            style={{ background: "linear-gradient(135deg, #8b5cf6, #3b82f6)" }}
-          >
-            <PenTool className="w-4 h-4 text-white" />
+          <div className="w-auto flex items-center justify-center">
+            <img
+              src={inkboardLogo}
+              alt="Inkboard"
+              className="h-12 w-auto object-contain"
+              style={{ background: "transparent" }}
+            />
           </div>
-          <span className="text-[17px] font-black tracking-tight">
-            Inkboard
-          </span>
         </div>
 
         {/* Nav links */}
