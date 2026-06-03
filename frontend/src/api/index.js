@@ -114,6 +114,7 @@ export const userAPI = {
   changePassword: (d) => api.put("/user/password", d),
   createPayment: (d) => api.post("/user/payment/create", d),
   getPaymentHistory: () => api.get("/user/payment/history"),
+  getPaymentStatus: (orderId) => api.get(`/user/payment/status/${orderId}`),
   getNotifications: () => api.get("/user/notifications"),
   markNotificationRead: (id) => api.put(`/user/notifications/${id}/read`),
 };

@@ -14,10 +14,17 @@ passport.use(
     },
     async (accessToken, refreshToken, profile, done) => {
       try {
-        const email = profile.emails[0].value;
+        const email = profile.emails?.[0]?.value;
+        if (!email) {
+          return done(
+            new Error("No email returned from Google profile"),
+            null,
+          );
+        }
+
         const existingUser = await query(
           "SELECT * FROM users WHERE email = $1 OR (oauth_provider = $2 AND oauth_id = $3)",
-          ["google", profile.id, email],
+          [email, "google", String(profile.id)],
         );
 
         if (existingUser.rows.length > 0) {
@@ -25,16 +32,18 @@ passport.use(
           if (!user.oauth_provider) {
             await query(
               "UPDATE users SET oauth_provider = $1, oauth_id = $2, avatar_url = $3, email_verified = true WHERE id = $4",
-              ["google", profile.id, profile.photos[0]?.value, user.id],
+              ["google", String(profile.id), profile.photos[0]?.value, user.id],
             );
           }
-          return done(null, existingUser.rows[0]);
+          return done(null, user);
         }
 
+        const baseName =
+          (profile.displayName || email.split("@")[0] || "user")
+            .replace(/\s+/g, "")
+            .toLowerCase() || "user";
         const username =
-          profile.displayName.replace(/\s+/g, "").toLowerCase() +
-          "_" +
-          Math.random().toString(36).substr(2, 5);
+          baseName + "_" + Math.random().toString(36).substr(2, 5);
         const newUser = await query(
           `INSERT INTO users (id, username, email, oauth_provider, oauth_id, avatar_url, email_verified, plan, created_at)
            VALUES ($1, $2, $3, $4, $5, $6, true, 'lite', NOW()) RETURNING *`,
@@ -43,7 +52,7 @@ passport.use(
             username,
             email,
             "google",
-            profile.id,
+            String(profile.id),
             profile.photos[0]?.value,
           ],
         );

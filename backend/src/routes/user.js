@@ -28,6 +28,11 @@ router.get(
   userController.getPaymentHistory,
 );
 router.get(
+  "/payment/status/:order_id",
+  authenticateToken,
+  userController.getPaymentStatus,
+);
+router.get(
   "/notifications",
   authenticateToken,
   userController.getNotifications,

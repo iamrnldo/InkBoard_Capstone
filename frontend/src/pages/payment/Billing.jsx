@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import { Check, Zap, Crown, Sparkles, ExternalLink } from "lucide-react";
 import { userAPI } from "../../api";
 import useAuthStore from "../../store/authStore";
@@ -61,11 +62,48 @@ const PLANS = [
 ];
 
 export default function Billing() {
-  const { user } = useAuthStore();
+  const { user, fetchMe } = useAuthStore();
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(null);
   const [qrModal, setQrModal] = useState(null);
+  const pollRef = useRef(null);
 
   const currentPlan = getPlanBadge(user?.plan);
+
+  // Poll the payment status while the QR modal is open so the plan activates
+  // automatically once the user pays (works even when the webhook can't reach
+  // localhost in development).
+  useEffect(() => {
+    if (!qrModal?.order_id) return;
+    let cancelled = false;
+
+    const tick = async () => {
+      if (cancelled) return;
+      try {
+        const { data } = await userAPI.getPaymentStatus(qrModal.order_id);
+        const status = data?.data?.status;
+        if (status === "paid") {
+          clearInterval(pollRef.current);
+          await fetchMe();
+          toast.success("Payment successful! Plan upgraded 🎉");
+          setQrModal(null);
+          navigate(`/payment/success?order_id=${qrModal.order_id}`);
+        } else if (["expired", "failed", "cancelled"].includes(status)) {
+          clearInterval(pollRef.current);
+          toast.error(`Payment ${status}`);
+          setQrModal(null);
+        }
+      } catch (_) {
+        /* keep polling */
+      }
+    };
+
+    pollRef.current = setInterval(tick, 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(pollRef.current);
+    };
+  }, [qrModal, fetchMe, navigate]);
 
   const handleUpgrade = async (planId) => {
     if (planId === "lite") return;
@@ -201,8 +239,11 @@ export default function Billing() {
             <p className="text-2xl font-bold text-gray-900 dark:text-white mb-1">
               {formatCurrency(qrModal.total_payment || qrModal.amount)}
             </p>
-            <p className="text-xs text-gray-400 mb-6">
+            <p className="text-xs text-gray-400 mb-2">
               Order: {qrModal.order_id}
+            </p>
+            <p className="text-xs text-primary-500 mb-6 animate-pulse">
+              Waiting for payment… this updates automatically.
             </p>
             <div className="space-y-2">
               <a

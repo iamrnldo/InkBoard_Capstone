@@ -22,6 +22,7 @@ import { io } from "socket.io-client";
 import { useBoardEditor } from "../../hooks/useBoard";
 import useAuthStore from "../../store/authStore";
 import { boardAPI, aiAPI } from "../../api";
+import { graphToExcalidrawElements } from "../../utils/diagram";
 import Button from "../../components/common/Button";
 import Modal from "../../components/common/Modal";
 import LoadingSpinner, {
@@ -191,40 +192,60 @@ function AIPanel({ boardId, excalidrawAPI, onClose }) {
     { id: "wireframe-to-code", label: "Wireframe → Code" },
   ];
 
+  // Convert an AI graph into valid Excalidraw elements and add them to the
+  // canvas, scrolling them into view. Returns the number of elements added.
+  const addGraphToCanvas = async (graph) => {
+    if (!excalidrawAPI || !graph?.nodes?.length) return 0;
+    // Pull the official converter from the same package the Canvas loads.
+    const { convertToExcalidrawElements } = await import(
+      "@excalidraw/excalidraw"
+    );
+    const newElements = graphToExcalidrawElements(
+      graph,
+      convertToExcalidrawElements,
+    );
+    if (!newElements.length) return 0;
+
+    excalidrawAPI.updateScene({
+      elements: [
+        ...(excalidrawAPI.getSceneElements() || []),
+        ...newElements,
+      ],
+    });
+    excalidrawAPI.scrollToContent(newElements, { fitToContent: true });
+    return newElements.length;
+  };
+
   const run = async () => {
     setLoading(true);
     setResult(null);
     try {
       let res;
       if (activeTab === "text-to-diagram") {
-        res = await aiAPI.textToDiagram({ prompt, board_id: boardId });
-        const diagram = res.data.data.diagram;
-        if (excalidrawAPI && diagram?.elements?.length > 0) {
-          excalidrawAPI.updateScene({
-            elements: [
-              ...(excalidrawAPI.getSceneElements() || []),
-              ...diagram.elements,
-            ],
-          });
-          toast.success("Diagram added to canvas!");
+        if (!prompt.trim()) {
+          toast.error("Please describe the diagram first");
+          return;
         }
-        setResult({ type: "diagram", data: diagram });
+        res = await aiAPI.textToDiagram({ prompt, board_id: boardId });
+        const graph = res.data.data.graph;
+        const added = await addGraphToCanvas(graph);
+        if (added > 0) toast.success("Diagram added to canvas!");
+        else toast.error("Could not render the diagram. Try rephrasing.");
+        setResult({ type: "diagram", data: graph });
       } else if (activeTab === "mermaid-to-inkboard") {
+        if (!mermaidCode.trim()) {
+          toast.error("Please paste Mermaid code first");
+          return;
+        }
         res = await aiAPI.mermaidToInkboard({
           mermaid_code: mermaidCode,
           board_id: boardId,
         });
-        const diagram = res.data.data.diagram;
-        if (excalidrawAPI && diagram?.elements?.length > 0) {
-          excalidrawAPI.updateScene({
-            elements: [
-              ...(excalidrawAPI.getSceneElements() || []),
-              ...diagram.elements,
-            ],
-          });
-          toast.success("Mermaid diagram converted!");
-        }
-        setResult({ type: "diagram", data: diagram });
+        const graph = res.data.data.graph;
+        const added = await addGraphToCanvas(graph);
+        if (added > 0) toast.success("Mermaid diagram converted!");
+        else toast.error("Could not render the diagram. Check the syntax.");
+        setResult({ type: "diagram", data: graph });
       } else {
         const canvasData = {
           elements: excalidrawAPI?.getSceneElements() || [],
@@ -380,8 +401,11 @@ function AIPanel({ boardId, excalidrawAPI, onClose }) {
             ) : (
               <div className="p-3 bg-green-50 dark:bg-green-900/20 rounded-xl border border-green-200 dark:border-green-800">
                 <p className="text-xs text-green-700 dark:text-green-400 font-semibold">
-                  ✓ Added to canvas ({result.data?.elements?.length || 0}{" "}
-                  elements)
+                  ✓ Added to canvas ({result.data?.nodes?.length || 0} nodes
+                  {result.data?.edges?.length
+                    ? `, ${result.data.edges.length} connections`
+                    : ""}
+                  )
                 </p>
               </div>
             )}

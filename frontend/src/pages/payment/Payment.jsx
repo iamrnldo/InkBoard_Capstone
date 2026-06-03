@@ -18,30 +18,69 @@ export default function Payment() {
   const orderId = params.get("order_id");
 
   useEffect(() => {
-    const checkPayment = async () => {
-      try {
-        // Re-fetch user to get updated plan
-        await fetchMe();
+    let cancelled = false;
+    let attempts = 0;
+    const MAX_ATTEMPTS = 20; // ~60s of polling at 3s intervals
 
-        if (orderId) {
-          // Get payment history to find this order
-          const { data } = await userAPI.getPaymentHistory();
-          const payment = data.data.find((p) => p.order_id === orderId);
-          if (payment) {
-            setPaymentData(payment);
-            setStatus(payment.status === "paid" ? "success" : payment.status);
-          } else {
-            setStatus("pending");
-          }
-        } else {
-          setStatus("success");
+    // No order_id → we cannot verify anything. Treat as pending, not success.
+    if (!orderId) {
+      setStatus("pending");
+      return;
+    }
+
+    const mapStatus = (s) =>
+      s === "paid"
+        ? "success"
+        : ["expired", "failed", "cancelled"].includes(s)
+          ? s === "cancelled"
+            ? "failed"
+            : s
+          : "pending";
+
+    const poll = async () => {
+      if (cancelled) return;
+      attempts += 1;
+      try {
+        const { data } = await userAPI.getPaymentStatus(orderId);
+        const apiStatus = data?.data?.status || "pending";
+        const uiStatus = mapStatus(apiStatus);
+
+        // Fetch the latest order details for display.
+        try {
+          const hist = await userAPI.getPaymentHistory();
+          const found = hist.data.data.find((p) => p.order_id === orderId);
+          if (found && !cancelled) setPaymentData(found);
+        } catch (_) {
+          /* non-fatal */
+        }
+
+        if (uiStatus === "success") {
+          await fetchMe(); // refresh plan badge
+          if (!cancelled) setStatus("success");
+          return;
+        }
+
+        if (uiStatus !== "pending") {
+          if (!cancelled) setStatus(uiStatus);
+          return;
+        }
+
+        // Still pending → keep polling for a while.
+        if (attempts < MAX_ATTEMPTS && !cancelled) {
+          setStatus("pending");
+          setTimeout(poll, 3000);
+        } else if (!cancelled) {
+          setStatus("pending");
         }
       } catch (_) {
-        setStatus("error");
+        if (!cancelled) setStatus("error");
       }
     };
 
-    checkPayment();
+    poll();
+    return () => {
+      cancelled = true;
+    };
   }, [orderId, fetchMe]);
 
   if (status === "loading") {

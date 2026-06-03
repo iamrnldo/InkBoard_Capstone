@@ -340,7 +340,8 @@ exports.createPayment = async (req, res) => {
       ],
     );
 
-    const redirectUrl = `${process.env.FRONTEND_URL}/payment/success`;
+    // Include order_id in the redirect so the success page can verify THIS order.
+    const redirectUrl = `${process.env.FRONTEND_URL}/payment/success?order_id=${orderId}`;
     const paymentUrl = `${PAKASIR_BASE_URL}/pay/${PAKASIR_PROJECT}/${amount}?order_id=${orderId}&qris_only=1&redirect=${encodeURIComponent(
       redirectUrl,
     )}`;
@@ -371,14 +372,126 @@ exports.createPayment = async (req, res) => {
 };
 
 // ============================================================
-// PAYMENTS — webhook
+// PAYMENTS — Pakasir status verification (source of truth)
+// ============================================================
+
+const PAID_STATUSES = ["completed", "paid", "success"];
+const FAILED_STATUSES = ["expired", "failed", "cancelled"];
+
+/**
+ * Ask Pakasir for the authoritative status of a transaction.
+ * Docs: GET /api/transactiondetail?project=&amount=&order_id=&api_key=
+ * Returns the normalized status string ("completed" | "pending" | "expired" | ...)
+ * or null if the call fails.
+ */
+async function fetchPakasirStatus(orderId, amount) {
+  try {
+    const { data } = await axios.get(
+      `${PAKASIR_BASE_URL}/api/transactiondetail`,
+      {
+        params: {
+          project: PAKASIR_PROJECT,
+          amount,
+          order_id: orderId,
+          api_key: PAKASIR_API_KEY,
+        },
+        timeout: 20000,
+      },
+    );
+    // Expected shape: { transaction: { status, amount, order_id, ... } }
+    return data?.transaction || null;
+  } catch (err) {
+    console.error("[fetchPakasirStatus] error:", {
+      order_id: orderId,
+      status: err.response?.status,
+      data: err.response?.data,
+      message: err.message,
+    });
+    return null;
+  }
+}
+
+/**
+ * Idempotently activate a plan for a paid order. Safe to call multiple times
+ * (webhook + polling) — it only acts when the payment isn't already 'paid'.
+ * Returns the final payment status string.
+ */
+async function activatePaidOrder(orderId) {
+  const paymentResult = await query(
+    "SELECT * FROM payments WHERE order_id = $1",
+    [orderId],
+  );
+  if (paymentResult.rows.length === 0) return null;
+  const payment = paymentResult.rows[0];
+
+  // Already processed → idempotent no-op.
+  if (payment.status === "paid") return "paid";
+
+  await query(
+    "UPDATE payments SET status = 'paid', paid_at = NOW(), updated_at = NOW() WHERE order_id = $1",
+    [orderId],
+  );
+
+  const subResult = await query(
+    "SELECT * FROM subscriptions WHERE order_id = $1",
+    [orderId],
+  );
+
+  if (subResult.rows.length > 0) {
+    const sub = subResult.rows[0];
+    const expiresAt = new Date();
+    expiresAt.setMonth(expiresAt.getMonth() + 1);
+
+    await query(
+      `UPDATE subscriptions
+       SET status = 'active', starts_at = NOW(), expires_at = $1, updated_at = NOW()
+       WHERE order_id = $2`,
+      [expiresAt, orderId],
+    );
+
+    await query(
+      "UPDATE users SET plan = $1, plan_expires_at = $2, updated_at = NOW() WHERE id = $3",
+      [sub.plan, expiresAt, payment.user_id],
+    );
+
+    await query(
+      `INSERT INTO notifications (id, user_id, title, message, type, created_at)
+       VALUES (uuid_generate_v4(), $1, 'Payment Successful!', $2, 'success', NOW())`,
+      [
+        payment.user_id,
+        `Your ${sub.plan} plan has been activated successfully!`,
+      ],
+    );
+
+    console.log(
+      `[payment] Plan ${sub.plan} activated for user ${payment.user_id} (order ${orderId})`,
+    );
+  }
+
+  return "paid";
+}
+
+async function markOrderFailed(orderId, status) {
+  await query(
+    "UPDATE payments SET status = $1, updated_at = NOW() WHERE order_id = $2 AND status = 'pending'",
+    [status, orderId],
+  );
+  await query(
+    "UPDATE subscriptions SET status = $1, updated_at = NOW() WHERE order_id = $2 AND status = 'pending'",
+    [status, orderId],
+  );
+  console.log(`[payment] Order ${orderId} marked as ${status}`);
+}
+
+// ============================================================
+// PAYMENTS — webhook (called by Pakasir servers)
 // ============================================================
 
 exports.paymentWebhook = async (req, res) => {
   try {
     console.log("[webhook] Received:", JSON.stringify(req.body));
 
-    const { order_id, status } = req.body;
+    const { order_id, amount } = req.body;
     if (!order_id) {
       return res
         .status(400)
@@ -394,62 +507,35 @@ exports.paymentWebhook = async (req, res) => {
         .status(404)
         .json({ success: false, message: "Payment not found" });
     }
-
     const payment = paymentResult.rows[0];
 
-    if (status === "completed" || status === "paid" || status === "success") {
-      await query(
-        "UPDATE payments SET status = 'paid', paid_at = NOW(), updated_at = NOW() WHERE order_id = $1",
-        [order_id],
+    // SECURITY: never trust the webhook body. Re-verify with Pakasir and make
+    // sure the amount matches what we recorded for this order.
+    const txn = await fetchPakasirStatus(order_id, payment.amount);
+
+    if (!txn) {
+      // Could not verify — do NOT activate. Ask Pakasir to retry later.
+      return res
+        .status(502)
+        .json({ success: false, message: "Could not verify with gateway" });
+    }
+
+    if (amount !== undefined && Number(amount) !== Number(payment.amount)) {
+      console.warn(
+        `[webhook] Amount mismatch for ${order_id}: body=${amount} db=${payment.amount}`,
       );
+      return res
+        .status(400)
+        .json({ success: false, message: "Amount mismatch" });
+    }
 
-      const subResult = await query(
-        "SELECT * FROM subscriptions WHERE order_id = $1",
-        [order_id],
-      );
-
-      if (subResult.rows.length > 0) {
-        const sub = subResult.rows[0];
-        const expiresAt = new Date();
-        expiresAt.setMonth(expiresAt.getMonth() + 1);
-
-        await query(
-          `UPDATE subscriptions
-           SET status = 'active', starts_at = NOW(), expires_at = $1, updated_at = NOW()
-           WHERE order_id = $2`,
-          [expiresAt, order_id],
-        );
-
-        await query(
-          "UPDATE users SET plan = $1, plan_expires_at = $2, updated_at = NOW() WHERE id = $3",
-          [sub.plan, expiresAt, payment.user_id],
-        );
-
-        await query(
-          `INSERT INTO notifications (id, user_id, title, message, type, created_at)
-           VALUES (uuid_generate_v4(), $1, 'Payment Successful!', $2, 'success', NOW())`,
-          [
-            payment.user_id,
-            `Your ${sub.plan} plan has been activated successfully!`,
-          ],
-        );
-
-        console.log(
-          `[webhook] Plan ${sub.plan} activated for user ${payment.user_id}`,
-        );
-      }
-    } else if (status === "expired" || status === "failed") {
-      await query(
-        "UPDATE payments SET status = $1, updated_at = NOW() WHERE order_id = $2",
-        [status, order_id],
-      );
-      await query(
-        "UPDATE subscriptions SET status = $1, updated_at = NOW() WHERE order_id = $2",
-        [status, order_id],
-      );
-      console.log(`[webhook] Payment ${order_id} marked as ${status}`);
+    const status = String(txn.status || "").toLowerCase();
+    if (PAID_STATUSES.includes(status)) {
+      await activatePaidOrder(order_id);
+    } else if (FAILED_STATUSES.includes(status)) {
+      await markOrderFailed(order_id, status === "cancelled" ? "cancelled" : status);
     } else {
-      console.warn(`[webhook] Unknown status received: ${status}`);
+      console.warn(`[webhook] Pending/unknown status for ${order_id}: ${status}`);
     }
 
     res.json({ success: true, message: "Webhook processed" });
@@ -458,6 +544,60 @@ exports.paymentWebhook = async (req, res) => {
     res
       .status(500)
       .json({ success: false, message: "Webhook processing failed" });
+  }
+};
+
+// ============================================================
+// PAYMENTS — status check (called by the frontend success page / QR modal)
+// Verifies directly against Pakasir so it works even when the webhook can't
+// reach localhost during development.
+// ============================================================
+
+exports.getPaymentStatus = async (req, res) => {
+  try {
+    const { order_id } = req.params;
+
+    const paymentResult = await query(
+      "SELECT * FROM payments WHERE order_id = $1 AND user_id = $2",
+      [order_id, req.user.id],
+    );
+    if (paymentResult.rows.length === 0) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Payment not found" });
+    }
+    const payment = paymentResult.rows[0];
+
+    // Already settled in our DB → return immediately.
+    if (payment.status !== "pending") {
+      return res.json({
+        success: true,
+        data: { order_id, status: payment.status, plan: payment.plan },
+      });
+    }
+
+    // Still pending locally → ask Pakasir for the real status.
+    const txn = await fetchPakasirStatus(order_id, payment.amount);
+    let status = payment.status;
+
+    if (txn) {
+      const remoteStatus = String(txn.status || "").toLowerCase();
+      if (PAID_STATUSES.includes(remoteStatus)) {
+        await activatePaidOrder(order_id);
+        status = "paid";
+      } else if (FAILED_STATUSES.includes(remoteStatus)) {
+        await markOrderFailed(
+          order_id,
+          remoteStatus === "cancelled" ? "cancelled" : remoteStatus,
+        );
+        status = remoteStatus === "cancelled" ? "cancelled" : remoteStatus;
+      }
+    }
+
+    res.json({ success: true, data: { order_id, status } });
+  } catch (error) {
+    console.error("[getPaymentStatus] error:", error.message, error.stack);
+    res.status(500).json({ success: false, message: "Server error" });
   }
 };
 
