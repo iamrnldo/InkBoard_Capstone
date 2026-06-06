@@ -175,6 +175,7 @@ function createManualElements(graph) {
 
   const elements = [];
   const idToPos = new Map();
+  const idToBottomY = new Map();
 
   // Use proper layout positions ...
   nodes.forEach((n) => {
@@ -267,6 +268,9 @@ function createManualElements(graph) {
 
     // Bind text to shape
     shape.boundElements.push({ type: "text", id: text.id });
+
+    // Store actual bottom Y of this shape for precise arrow start (below the shape, not on top-left)
+    idToBottomY.set(n.id, y + shapeHeight);
   });
 
   // Arrows using the proper layout positions (straight vertical/horizontal lines for clean penataan)
@@ -277,26 +281,38 @@ function createManualElements(graph) {
     const to = idToPos.get(e.target);
     if (!from || !to) return;
 
-    const dx = to.x - from.x;
-    let arrowStartY = from.y + NODE_H; // start the arrow line below the upper shape (for vertical TB flows)
-    let dy = to.y - arrowStartY;
+    const fromBottomY = idToBottomY.get(e.source) || from.y + NODE_H;
 
-    // For horizontal (LR) or mixed, fall back to simple center-to-center delta
-    if (Math.abs(dx) > Math.abs(dy) || dy < 0) {
-      arrowStartY = from.y;
-      dy = to.y - from.y;
+    // Vertical TB (default for flowcharts): bottom center of from -> top center of to
+    let lineStartX = from.x + NODE_W / 2;
+    let lineStartY = fromBottomY;
+    let lineEndX = to.x + NODE_W / 2;
+    let lineEndY = to.y;
+
+    const dx = lineEndX - lineStartX;
+    const dy = lineEndY - lineStartY;
+
+    // Horizontal fallback for LR or wide flows
+    if (Math.abs(dx) > Math.abs(dy) * 1.5) {
+      lineStartX = from.x + NODE_W;
+      lineStartY = from.y + NODE_H / 2;
+      lineEndX = to.x;
+      lineEndY = to.y + NODE_H / 2;
     }
 
-    const arrowX = Math.min(from.x, to.x);
-    const arrowY = Math.min(from.y, arrowStartY);
+    const arrowDx = lineEndX - lineStartX;
+    const arrowDy = lineEndY - lineStartY;
+
+    const arrowX = Math.min(lineStartX, lineEndX);
+    const arrowY = Math.min(lineStartY, lineEndY);
 
     const arrow = {
       id: `arrow-${e.source}-${e.target}`,
       type: "arrow",
-      x: arrowX - 5,
-      y: arrowY - 5,
-      width: Math.abs(dx) + 20,
-      height: Math.abs(dy) + 20,
+      x: arrowX,
+      y: arrowY,
+      width: Math.abs(arrowDx) + 15,
+      height: Math.abs(arrowDy) + 15,
       angle: 0,
       strokeColor: "#1e1e1e",
       backgroundColor: "transparent",
@@ -317,11 +333,11 @@ function createManualElements(graph) {
       locked: false,
       points: [
         [0, 0],
-        [dx, dy], // exact delta → perfectly straight vertical lines for TB flow
+        [arrowDx, arrowDy],
       ],
       lastCommittedPoint: null,
-      startBinding: { elementId: `shape-${e.source}`, focus: 0, gap: 6 },
-      endBinding: { elementId: `shape-${e.target}`, focus: 0, gap: 6 },
+      startBinding: { elementId: `shape-${e.source}`, focus: 0, gap: 4 },
+      endBinding: { elementId: `shape-${e.target}`, focus: 0, gap: 4 },
       startArrowhead: null,
       endArrowhead: "arrow",
     };
