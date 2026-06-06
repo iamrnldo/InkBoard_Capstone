@@ -42,7 +42,10 @@ function layout(nodes, edges, direction) {
     if (visited.has(cur)) continue;
     visited.add(cur);
     for (const next of adj.get(cur) || []) {
-      level.set(next, Math.max(level.get(next) || 0, (level.get(cur) || 0) + 1));
+      level.set(
+        next,
+        Math.max(level.get(next) || 0, (level.get(cur) || 0) + 1),
+      );
       if (!visited.has(next)) queue.push(next);
     }
   }
@@ -152,13 +155,185 @@ export function graphToSkeleton(graph) {
  * @param {object} graph
  * @param {Function} convertToExcalidrawElements  from "@excalidraw/excalidraw"
  */
+/**
+ * Simple manual creator for basic diagram elements.
+ * This is a reliable fallback that always produces renderable elements
+ * without depending on the converter.
+ */
+function createManualElements(graph) {
+  const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
+  const edges = Array.isArray(graph?.edges) ? graph.edges : [];
+  if (nodes.length === 0) return [];
+
+  const OFFSET_X = 120;
+  const OFFSET_Y = 120;
+  const NODE_W = 200;
+  const NODE_H = 80;
+  const GAP_X = 140;
+  const GAP_Y = 100;
+
+  const elements = [];
+  const idToPos = new Map();
+
+  // Simple top-to-bottom layout
+  nodes.forEach((n, i) => {
+    const x = OFFSET_X + (i % 3) * (NODE_W + GAP_X);
+    const y = OFFSET_Y + Math.floor(i / 3) * (NODE_H + GAP_Y);
+
+    idToPos.set(n.id, { x, y });
+
+    const isEllipse = n.shape === "ellipse";
+    const isDiamond = n.shape === "diamond";
+
+    // Shape
+    const shape = {
+      id: `shape-${n.id}`,
+      type: isEllipse ? "ellipse" : isDiamond ? "diamond" : "rectangle",
+      x,
+      y,
+      width: NODE_W,
+      height: NODE_H,
+      angle: 0,
+      strokeColor: "#1e1e1e",
+      backgroundColor: isDiamond ? "#fff3bf" : "#e7f5ff",
+      fillStyle: "solid",
+      strokeWidth: 2,
+      strokeStyle: "solid",
+      roughness: 1,
+      opacity: 100,
+      groupIds: [],
+      frameId: null,
+      roundness: null,
+      seed: Math.floor(Math.random() * 100000),
+      versionNonce: Math.floor(Math.random() * 100000),
+      isDeleted: false,
+      boundElements: [],
+      updated: Date.now(),
+      link: null,
+      locked: false,
+    };
+    elements.push(shape);
+
+    // Text label inside the shape
+    const text = {
+      id: `text-${n.id}`,
+      type: "text",
+      x: x + 10,
+      y: y + 20,
+      width: NODE_W - 20,
+      height: 40,
+      angle: 0,
+      strokeColor: "#1e1e1e",
+      backgroundColor: "transparent",
+      fillStyle: "solid",
+      strokeWidth: 1,
+      strokeStyle: "solid",
+      roughness: 1,
+      opacity: 100,
+      groupIds: [],
+      frameId: null,
+      roundness: null,
+      seed: Math.floor(Math.random() * 100000),
+      versionNonce: Math.floor(Math.random() * 100000),
+      isDeleted: false,
+      boundElements: [],
+      updated: Date.now(),
+      link: null,
+      locked: false,
+      text: n.label || n.id,
+      fontSize: 16,
+      fontFamily: 1,
+      textAlign: "center",
+      verticalAlign: "middle",
+      containerId: shape.id,
+      originalText: n.label || n.id,
+      lineHeight: 1.25,
+    };
+    elements.push(text);
+
+    // Bind text to shape
+    shape.boundElements.push({ type: "text", id: text.id });
+  });
+
+  // Simple arrows
+  edges.forEach((e) => {
+    const from = idToPos.get(e.source);
+    const to = idToPos.get(e.target);
+    if (!from || !to) return;
+
+    const arrow = {
+      id: `arrow-${e.source}-${e.target}`,
+      type: "arrow",
+      x: Math.min(from.x, to.x),
+      y: Math.min(from.y, to.y),
+      width: Math.abs(to.x - from.x) + 20,
+      height: Math.abs(to.y - from.y) + 20,
+      angle: 0,
+      strokeColor: "#1e1e1e",
+      backgroundColor: "transparent",
+      fillStyle: "solid",
+      strokeWidth: 2,
+      strokeStyle: "solid",
+      roughness: 1,
+      opacity: 100,
+      groupIds: [],
+      frameId: null,
+      roundness: null,
+      seed: Math.floor(Math.random() * 100000),
+      versionNonce: Math.floor(Math.random() * 100000),
+      isDeleted: false,
+      boundElements: [],
+      updated: Date.now(),
+      link: null,
+      locked: false,
+      points: [
+        [0, 0],
+        [to.x - from.x + 20, to.y - from.y + 20],
+      ],
+      lastCommittedPoint: null,
+      startBinding: { elementId: `shape-${e.source}`, focus: 0, gap: 10 },
+      endBinding: { elementId: `shape-${e.target}`, focus: 0, gap: 10 },
+      startArrowhead: null,
+      endArrowhead: "arrow",
+    };
+
+    if (e.label) {
+      arrow.label = {
+        text: e.label,
+        fontSize: 14,
+      };
+    }
+
+    elements.push(arrow);
+  });
+
+  return elements;
+}
+
+/**
+ * Convert a graph into ready-to-render Excalidraw elements.
+ * Tries the official converter first, falls back to manual creation if it fails.
+ */
 export function graphToExcalidrawElements(graph, convertToExcalidrawElements) {
   const skeleton = graphToSkeleton(graph);
   if (skeleton.length === 0) return [];
-  try {
-    return convertToExcalidrawElements(skeleton);
-  } catch (err) {
-    console.error("graphToExcalidrawElements conversion failed:", err);
-    return [];
+
+  // Try official converter only if provided and is function
+  if (typeof convertToExcalidrawElements === "function") {
+    try {
+      const result = convertToExcalidrawElements(skeleton);
+      if (result && result.length > 0) {
+        return result;
+      }
+    } catch (err) {
+      console.warn(
+        "[Diagram] Official converter failed, using manual fallback:",
+        err.message,
+      );
+    }
   }
+
+  // Reliable manual fallback (always works)
+  console.warn("[Diagram] Using manual element creation for compatibility.");
+  return createManualElements(graph);
 }

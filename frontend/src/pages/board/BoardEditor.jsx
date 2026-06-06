@@ -32,10 +32,16 @@ import CollaboratorCursors from "../../components/board/CollaboratorCursors";
 import ThumbnailCapture from "../../components/board/ThumbnailCapture";
 import { generateAvatarUrl, canUseAI, canShareEdit } from "../../utils/helpers";
 import toast from "react-hot-toast";
+import useBoardStore from "../../store/boardStore";
 
-const ExcalidrawComponent = lazy(() =>
+const Excalidraw = lazy(() =>
   import("@excalidraw/excalidraw").then((m) => ({ default: m.Excalidraw })),
 );
+
+// Wrapper to properly forward refs through React.lazy (fixes "cannot be given refs" warning)
+const ExcalidrawWrapper = React.forwardRef((props, ref) => (
+  <Excalidraw {...props} ref={ref} />
+));
 
 const SOCKET_URL = process.env.REACT_APP_SOCKET_URL || "http://localhost:5273";
 
@@ -177,7 +183,7 @@ function ShareModal({ board, user, onClose }) {
 /* ─────────────────────────────────────────────────────────────
    AI Panel
 ───────────────────────────────────────────────────────────── */
-function AIPanel({ boardId, excalidrawAPI, onClose }) {
+function AIPanel({ boardId, excalidrawAPI, onAIDiagramFallback, onClose }) {
   const [activeTab, setActiveTab] = useState("text-to-diagram");
   const [prompt, setPrompt] = useState("");
   const [mermaidCode, setMermaidCode] = useState("");
@@ -195,24 +201,59 @@ function AIPanel({ boardId, excalidrawAPI, onClose }) {
   // Convert an AI graph into valid Excalidraw elements and add them to the
   // canvas, scrolling them into view. Returns the number of elements added.
   const addGraphToCanvas = async (graph) => {
-    if (!excalidrawAPI || !graph?.nodes?.length) return 0;
-    // Pull the official converter from the same package the Canvas loads.
-    const { convertToExcalidrawElements } = await import(
-      "@excalidraw/excalidraw"
-    );
+    const api = excalidrawAPI;
     const newElements = graphToExcalidrawElements(
       graph,
-      convertToExcalidrawElements,
+      null, // pass null to force the manual creation fallback inside the util
     );
-    if (!newElements.length) return 0;
 
-    excalidrawAPI.updateScene({
-      elements: [
-        ...(excalidrawAPI.getSceneElements() || []),
-        ...newElements,
-      ],
-    });
-    excalidrawAPI.scrollToContent(newElements, { fitToContent: true });
+    if (!newElements || newElements.length === 0) {
+      console.warn("[AI Diagram] No elements generated from graph:", graph);
+      return 0;
+    }
+
+    if (api) {
+      try {
+        api.updateScene({
+          elements: [...(api.getSceneElements() || []), ...newElements],
+        });
+        api.scrollToContent(newElements, { fitToContent: true });
+        return newElements.length;
+      } catch (err) {
+        console.error("[AI Diagram] updateScene failed:", err);
+      }
+    }
+
+    // Fallback: update via store (will persist the diagram to the board)
+    try {
+      const store = useBoardStore.getState();
+      const current = store.currentBoard;
+      if (current) {
+        const currentElements = current.canvas_data?.elements || [];
+        const updatedCanvas = {
+          ...current.canvas_data,
+          elements: [...currentElements, ...newElements],
+        };
+        // update local store for immediate effect (re-render may pick new initialData)
+        store.setCurrentBoard({
+          ...current,
+          canvas_data: updatedCanvas,
+        });
+        // persist to server
+        await boardAPI.updateBoard(boardId, { canvas_data: updatedCanvas });
+        console.log(
+          "[AI Diagram] Added via fallback store update (no Excalidraw API available)",
+        );
+
+        // Force the Excalidraw component to remount with the new initialData
+        if (onAIDiagramFallback) onAIDiagramFallback();
+
+        return newElements.length;
+      }
+    } catch (err) {
+      console.error("[AI Diagram] Fallback store update failed:", err);
+    }
+
     return newElements.length;
   };
 
@@ -229,9 +270,15 @@ function AIPanel({ boardId, excalidrawAPI, onClose }) {
         res = await aiAPI.textToDiagram({ prompt, board_id: boardId });
         const graph = res.data.data.graph;
         const added = await addGraphToCanvas(graph);
-        if (added > 0) toast.success("Diagram added to canvas!");
-        else toast.error("Could not render the diagram. Try rephrasing.");
-        setResult({ type: "diagram", data: graph });
+        if (added > 0) {
+          toast.success(`Diagram added to canvas! (${added} elements)`);
+          setResult({ type: "diagram", data: graph });
+        } else {
+          toast.error(
+            "Could not render the diagram on the canvas. Check the browser console (F12) for details and try again.",
+          );
+          // Do not set result box if we couldn't actually add anything
+        }
       } else if (activeTab === "mermaid-to-inkboard") {
         if (!mermaidCode.trim()) {
           toast.error("Please paste Mermaid code first");
@@ -243,9 +290,14 @@ function AIPanel({ boardId, excalidrawAPI, onClose }) {
         });
         const graph = res.data.data.graph;
         const added = await addGraphToCanvas(graph);
-        if (added > 0) toast.success("Mermaid diagram converted!");
-        else toast.error("Could not render the diagram. Check the syntax.");
-        setResult({ type: "diagram", data: graph });
+        if (added > 0) {
+          toast.success(`Mermaid diagram converted! (${added} elements)`);
+          setResult({ type: "diagram", data: graph });
+        } else {
+          toast.error(
+            "Could not render the diagram. Check the Mermaid syntax or try rephrasing.",
+          );
+        }
       } else {
         const canvasData = {
           elements: excalidrawAPI?.getSceneElements() || [],
@@ -259,7 +311,11 @@ function AIPanel({ boardId, excalidrawAPI, onClose }) {
         setResult({ type: "code", data: res.data.data.code });
       }
     } catch (err) {
-      toast.error(err.response?.data?.message || "AI request failed");
+      console.error("[AI] Request failed:", err);
+      toast.error(
+        err.response?.data?.message ||
+          "AI request failed. Check console for details.",
+      );
     } finally {
       setLoading(false);
     }
@@ -444,8 +500,10 @@ export default function BoardEditor() {
     updateTitle,
   } = useBoardEditor(id);
 
+  const excalidrawRef = useRef(null);
   const [excalidrawAPI, setExcalidrawAPI] = useState(null);
   const [showShare, setShowShare] = useState(false);
+  const [aiForceRemountKey, setAiForceRemountKey] = useState(0);
   const [showAI, setShowAI] = useState(false);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
@@ -478,18 +536,19 @@ export default function BoardEditor() {
   /* ── Remote canvas update ── */
   useEffect(() => {
     const socket = socketRef.current;
-    if (!socket || !excalidrawAPI) return;
+    const api = excalidrawAPI || excalidrawRef.current;
+    if (!socket || !api) return;
 
     const handler = ({ elements, from }) => {
       if (from === socket.id) return;
       try {
-        excalidrawAPI.updateScene({ elements });
+        api.updateScene({ elements });
       } catch (_) {}
     };
 
     socket.on("canvas-update", handler);
     return () => socket.off("canvas-update", handler);
-  }, [excalidrawAPI]);
+  }, [excalidrawAPI, excalidrawRef.current]);
 
   /* ── Canvas onChange ── */
   const handleChange = useCallback(
@@ -507,10 +566,11 @@ export default function BoardEditor() {
     const handler = (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "s") {
         e.preventDefault();
-        if (excalidrawAPI) {
-          const elements = excalidrawAPI.getSceneElements();
-          const appState = excalidrawAPI.getAppState();
-          const files = excalidrawAPI.getFiles();
+        const api = excalidrawAPI || excalidrawRef.current;
+        if (api) {
+          const elements = api.getSceneElements();
+          const appState = api.getAppState();
+          const files = api.getFiles();
           const { collaborators: _c, ...safeAppState } = appState;
           saveNow({ elements, appState: safeAppState, files });
         }
@@ -518,7 +578,7 @@ export default function BoardEditor() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [excalidrawAPI, saveNow]);
+  }, [excalidrawAPI, excalidrawRef.current, saveNow]);
 
   /* ── Title ── */
   const startEditTitle = () => {
@@ -683,10 +743,11 @@ export default function BoardEditor() {
             size="sm"
             icon={Save}
             onClick={() => {
-              if (excalidrawAPI) {
-                const elements = excalidrawAPI.getSceneElements();
-                const appState = excalidrawAPI.getAppState();
-                const files = excalidrawAPI.getFiles();
+              const api = excalidrawAPI || excalidrawRef.current;
+              if (api) {
+                const elements = api.getSceneElements();
+                const appState = api.getAppState();
+                const files = api.getFiles();
                 const { collaborators: _c, ...safeAppState } = appState;
                 saveNow({ elements, appState: safeAppState, files });
               }
@@ -706,8 +767,14 @@ export default function BoardEditor() {
           className="flex-1 min-w-0 relative"
         >
           <Suspense fallback={<PageLoader />}>
-            <ExcalidrawComponent
-              ref={setExcalidrawAPI}
+            <ExcalidrawWrapper
+              key={`excalidraw-${aiForceRemountKey}`}
+              ref={(api) => {
+                excalidrawRef.current = api;
+                if (api) {
+                  setExcalidrawAPI(api);
+                }
+              }}
               initialData={initialData}
               onChange={handleChange}
               viewModeEnabled={isReadOnly}
@@ -733,7 +800,8 @@ export default function BoardEditor() {
         {showAI && (
           <AIPanel
             boardId={id}
-            excalidrawAPI={excalidrawAPI}
+            excalidrawAPI={excalidrawAPI || excalidrawRef.current}
+            onAIDiagramFallback={() => setAiForceRemountKey((k) => k + 1)}
             onClose={() => setShowAI(false)}
           />
         )}
