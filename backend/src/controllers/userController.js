@@ -148,7 +148,7 @@ exports.uploadAvatar = async (req, res) => {
     // Build a publicly accessible URL.
     // Make sure your Express app serves /uploads as static:
     //   app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
-    const avatarUrl = `${process.env.BACKEND_URL || "http://localhost:5000"}/uploads/avatars/${req.file.filename}`;
+    const avatarUrl = `${process.env.BACKEND_URL || "http://localhost:5273"}/uploads/avatars/${req.file.filename}`;
 
     // Persist to DB
     await query(

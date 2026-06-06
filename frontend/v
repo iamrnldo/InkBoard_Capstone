@@ -1,0 +1,11 @@
+# Frontend Environment Variables (Create React App)
+# Copy this file to .env (in frontend/ folder) and customize
+
+# API and Socket URLs (point to your backend)
+REACT_APP_API_URL=http://localhost:5273/api
+REACT_APP_SOCKET_URL=http://localhost:5273
+
+# Optional: Override dev server port (also set in package.json start script)
+PORT=3270
+
+# Add any other REACT_APP_ variables here as needed

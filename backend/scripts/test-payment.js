@@ -16,7 +16,7 @@
 require("dotenv").config();
 const axios = require("axios");
 
-const API = process.env.TEST_API_URL || "http://localhost:5000/api";
+const API = process.env.TEST_API_URL || "http://localhost:5273/api";
 const PAKASIR_BASE_URL = process.env.PAKASIR_BASE_URL;
 const PAKASIR_PROJECT = process.env.PAKASIR_PROJECT;
 const PAKASIR_API_KEY = process.env.PAKASIR_API_KEY;

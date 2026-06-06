@@ -37,7 +37,7 @@ const ExcalidrawComponent = lazy(() =>
   import("@excalidraw/excalidraw").then((m) => ({ default: m.Excalidraw })),
 );
 
-const SOCKET_URL = process.env.REACT_APP_SOCKET_URL || "http://localhost:5000";
+const SOCKET_URL = process.env.REACT_APP_SOCKET_URL || "http://localhost:5273";
 
 /* ─────────────────────────────────────────────────────────────
    Helper: sanitize appState agar aman untuk Excalidraw

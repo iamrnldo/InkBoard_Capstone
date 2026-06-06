@@ -551,7 +551,7 @@ exports.uploadThumbnail = async (req, res) => {
       fs.unlink(oldFile, () => {}); // fire-and-forget
     }
 
-    const backendUrl = process.env.BACKEND_URL || "http://localhost:5000";
+    const backendUrl = process.env.BACKEND_URL || "http://localhost:5273";
     const thumbnailUrl = `${backendUrl}/uploads/thumbnails/${req.file.filename}`;
 
     await query(

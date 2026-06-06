@@ -6,7 +6,7 @@ import useAuthStore from "../store/authStore";
 import { boardAPI } from "../api";
 import toast from "react-hot-toast";
 
-const SOCKET_URL = process.env.REACT_APP_SOCKET_URL || "http://localhost:5000";
+const SOCKET_URL = process.env.REACT_APP_SOCKET_URL || "http://localhost:5273";
 
 /**
  * Hook for board list management (dashboard).

@@ -45,7 +45,7 @@ export default function Register() {
   };
 
   const oauthLogin = (provider) => {
-    window.location.href = `${process.env.REACT_APP_API_URL || "http://localhost:5000/api"}/auth/${provider}`;
+    window.location.href = `${process.env.REACT_APP_API_URL || "http://localhost:5273/api"}/auth/${provider}`;
   };
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
