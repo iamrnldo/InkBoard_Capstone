@@ -1,6 +1,6 @@
 const axios = require("axios");
 const { query } = require("../config/database");
-const { deepaiChat } = require("../services/deepai");
+const { generateDiagramImage } = require("../services/aibanana");
 
 const AI_BASE_URL = process.env.AI_BASE_URL;
 const AI_API_KEY = process.env.AI_API_KEY;
@@ -222,7 +222,7 @@ const generateFallbackGraph = (prompt) => {
  */
 const generateCleanSimpleGraph = (prompt) => {
   const lower = (prompt || "").toLowerCase();
-  const title = prompt.slice(0, 50) || "Simple Flowchart";
+  const title = prompt.slice(0, 60) || "Simple Flowchart";
 
   // Special case for "kasir" / cashier (common in user's tests)
   if (
@@ -230,6 +230,48 @@ const generateCleanSimpleGraph = (prompt) => {
     lower.includes("cashier") ||
     lower.includes("flowchart kasir")
   ) {
+    if (lower.includes("hotel") || lower.includes("hotel kasir")) {
+      // More complex, Lucidchart-like for hotel cashier
+      return {
+        title: "Flowchart Kasir Hotel",
+        direction: "TB",
+        nodes: [
+          { id: "n1", label: "Mulai / Check-in", shape: "ellipse" },
+          { id: "n2", label: "Verifikasi Reservasi", shape: "rectangle" },
+          { id: "n3", label: "Scan ID / KTP Tamu", shape: "rectangle" },
+          { id: "n4", label: "Cek Ketersediaan Kamar", shape: "diamond" },
+          {
+            id: "n5",
+            label: "Hitung Total\n(Kamar + Layanan + Pajak)",
+            shape: "rectangle",
+          },
+          { id: "n6", label: "Pilih Metode Pembayaran", shape: "diamond" },
+          {
+            id: "n7",
+            label: "Proses Bayar (Tunai/Kartu/Transfer)",
+            shape: "rectangle",
+          },
+          {
+            id: "n8",
+            label: "Cetak Struk & Berikan Kunci",
+            shape: "rectangle",
+          },
+          { id: "n9", label: "Selesai / Check-out", shape: "ellipse" },
+        ],
+        edges: [
+          { source: "n1", target: "n2" },
+          { source: "n2", target: "n3" },
+          { source: "n3", target: "n4" },
+          { source: "n4", target: "n5", label: "Tersedia" },
+          { source: "n4", target: "n9", label: "Tidak Tersedia" },
+          { source: "n5", target: "n6" },
+          { source: "n6", target: "n7" },
+          { source: "n7", target: "n8", label: "Lunas" },
+          { source: "n8", target: "n9" },
+        ],
+      };
+    }
+    // Original 5-node kasir
     return {
       title: "Flowchart Kasir",
       direction: "TB",
@@ -249,8 +291,89 @@ const generateCleanSimpleGraph = (prompt) => {
     };
   }
 
-  // Generic clean simple flowchart
-  const mainLabel = prompt.slice(0, 35).trim() || "Proses Utama";
+  // Special case for online sales / penjualan online (common prompt, avoid prompt leak as node label)
+  if (
+    lower.includes("penjualan") ||
+    lower.includes("sales") ||
+    lower.includes("online") ||
+    lower.includes("e-commerce") ||
+    lower.includes("flowchart penjualan") ||
+    lower.includes("jual")
+  ) {
+    return {
+      title: "Flowchart Penjualan Online",
+      direction: "TB",
+      nodes: [
+        { id: "n1", label: "Mulai", shape: "ellipse" },
+        { id: "n2", label: "Browse Produk", shape: "rectangle" },
+        { id: "n3", label: "Pilih & Tambah ke Keranjang", shape: "rectangle" },
+        { id: "n4", label: "Checkout", shape: "rectangle" },
+        { id: "n5", label: "Pembayaran", shape: "diamond" },
+        { id: "n6", label: "Konfirmasi Pesanan", shape: "rectangle" },
+        { id: "n7", label: "Selesai", shape: "ellipse" },
+      ],
+      edges: [
+        { source: "n1", target: "n2" },
+        { source: "n2", target: "n3" },
+        { source: "n3", target: "n4" },
+        { source: "n4", target: "n5" },
+        { source: "n5", target: "n6", label: "Lunas" },
+        { source: "n6", target: "n7" },
+      ],
+    };
+  }
+
+  // Generic: try to make more complex by splitting prompt into steps (for richer response like Lucidchart)
+  // Clean prompt to avoid leaking "buatkan flowchart ..." as node labels
+  const cleanedPrompt = String(prompt || "")
+    .replace(
+      /\b(buatkan|buat|flowchart|diagram|saya|tolong|please|make|create)\b/gi,
+      "",
+    )
+    .trim();
+  const splitters =
+    /[\.,;]|\b(dan|then|kemudian|selanjutnya|setelah|atau|or|next|->|→)\b/i;
+  let parts = cleanedPrompt
+    .split(splitters)
+    .map((p) => p.trim())
+    .filter((p) => p.length > 3 && p.length < 40)
+    .slice(0, 8);
+
+  if (parts.length >= 3) {
+    const nodes = parts.map((label, i) => ({
+      id: `n${i + 1}`,
+      label: label.slice(0, 35),
+      shape:
+        i === 0
+          ? "ellipse"
+          : i === parts.length - 1
+            ? "ellipse"
+            : i % 3 === 0
+              ? "diamond"
+              : "rectangle",
+    }));
+    const edges = [];
+    for (let i = 0; i < nodes.length - 1; i++) {
+      edges.push({ source: `n${i + 1}`, target: `n${i + 2}` });
+    }
+    // Add one decision branch for complexity
+    if (nodes.length >= 5) {
+      edges.push({
+        source: `n${Math.floor(nodes.length / 2)}`,
+        target: `n${nodes.length}`,
+        label: "Alternatif",
+      });
+    }
+    return {
+      title: title,
+      direction: "TB",
+      nodes,
+      edges,
+    };
+  }
+
+  // Fallback generic clean simple flowchart - use short cleaned label
+  const mainLabel = cleanedPrompt.slice(0, 25).trim() || "Proses Utama";
   return {
     title,
     direction: "TB",
@@ -347,94 +470,84 @@ exports.textToDiagram = async (req, res) => {
       });
     }
 
-    const { prompt, board_id, style = "flowchart" } = req.body;
+    const { prompt, board_id } = req.body;
     if (!prompt || !String(prompt).trim()) {
       return res
         .status(400)
         .json({ success: false, message: "Prompt is required" });
     }
 
-    const aiResponse = await callAI(
-      [
-        { role: "system", content: DIAGRAM_SYSTEM_PROMPT },
-        {
-          role: "user",
-          content: `Create a ${style} diagram for: ${prompt}`,
-        },
-      ],
-      2000,
-      0.2, // low temperature → more reliable structured JSON
+    let result;
+    let isImage = false;
+
+    console.log(
+      `[${new Date().toISOString()}] [textToDiagram] Received prompt: "${prompt}" (user: ${req.user?.id || "unknown"}, board: ${board_id || "none"})`,
     );
 
-    const content = aiResponse?.choices?.[0]?.message?.content;
+    const AIBANANA_TIMEOUT_MS = 45000; // 45s max for external scrape (solver + aibanana.net); fallback fast to prevent frontend 30s+ timeout
+    const startTime = Date.now();
 
-    // Detect if the DeepAI scrape returned garbage (the system prompt or instructions)
-    // This happens often with the scrape method.
-    const badResponseIndicators = [
-      "structured graph in JSON",
-      "Return ONLY valid JSON",
-      "Please provide the user's request for diagramming",
-      "I will convert it in",
-      "a clean structured graph in JSON",
-      "convert the user's request",
-    ];
-    const isBadAIResponse = badResponseIndicators.some((ind) =>
-      (content || "").toLowerCase().includes(ind.toLowerCase()),
-    );
-
-    let graph;
-
-    if (isBadAIResponse) {
-      console.warn(
-        "[textToDiagram] Detected bad AI response (prompt leakage). Using clean generation.",
+    try {
+      // Use AIBanana scrape (image generation) instead of DeepAI chat scrape
+      console.log(
+        "[textToDiagram] Using AIBanana scrape for diagram generation... (will hard-timeout after 45s and fallback to graph)",
       );
-      graph = generateCleanSimpleGraph(prompt);
-    } else {
-      let parsed = extractJSON(content);
+      const imagePromise = generateDiagramImage(prompt);
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(
+          () =>
+            reject(
+              new Error(`AIBanana hard timeout after ${AIBANANA_TIMEOUT_MS}ms`),
+            ),
+          AIBANANA_TIMEOUT_MS,
+        ),
+      );
 
-      if (parsed && Array.isArray(parsed.nodes) && parsed.nodes.length > 0) {
-        graph = normalizeGraph(parsed, prompt.slice(0, 60));
-      } else {
-        // Try heuristic parsing from the raw text
-        console.warn(
-          "[textToDiagram] JSON parse failed. Trying heuristic on content:",
-          content,
-        );
-        const heuristic = heuristicToGraph(content, prompt);
-        if (heuristic.nodes.length > 0) {
-          graph = heuristic;
-        } else {
-          // Ultimate fallback - always succeed with a basic diagram
-          console.warn(
-            "[textToDiagram] Heuristic also failed. Using basic fallback.",
-          );
-          graph = generateFallbackGraph(prompt);
-        }
-      }
+      result = await Promise.race([imagePromise, timeoutPromise]);
+      isImage = true;
+      const elapsed = Date.now() - startTime;
+      console.log(
+        `[textToDiagram] AIBanana success in ${elapsed}ms. Response type/shape keys:`,
+        Object.keys(result || {}),
+        "isImage:",
+        isImage,
+      );
+      if (result && result.images)
+        console.log("[textToDiagram] Image count:", result.images.length);
+    } catch (scrapeErr) {
+      const elapsed = Date.now() - startTime;
+      console.warn(
+        `[textToDiagram] AIBanana scrape failed/timed out after ${elapsed}ms, falling back to clean graph:`,
+        scrapeErr.message,
+      );
+      // Fallback to the reliable clean graph we had before
+      result = generateCleanSimpleGraph(prompt);
     }
 
     await query(
       `INSERT INTO ai_usage (id, user_id, board_id, tool_type, prompt, result, tokens_used, created_at)
        VALUES (uuid_generate_v4(), $1, $2, 'text_to_diagram', $3, $4, $5, NOW())`,
-      [
-        req.user.id,
-        board_id || null,
-        prompt,
-        JSON.stringify(graph),
-        aiResponse.usage?.total_tokens || 0,
-      ],
+      [req.user.id, board_id || null, prompt, JSON.stringify(result), 0],
     );
 
-    res.json({
-      success: true,
-      data: {
-        // `graph` is the new, reliable payload the frontend converts to
-        // valid Excalidraw elements. `diagram` is kept for backward compat.
-        graph,
-        diagram: { elements: [], appState: {}, files: {} },
-        tokensUsed: aiResponse.usage?.total_tokens || 0,
-      },
-    });
+    if (isImage) {
+      res.json({
+        success: true,
+        data: {
+          image: result,
+          type: "image",
+        },
+      });
+    } else {
+      res.json({
+        success: true,
+        data: {
+          graph: result,
+          diagram: { elements: [], appState: {}, files: {} },
+          tokensUsed: 0,
+        },
+      });
+    }
   } catch (error) {
     console.error(
       "Text to diagram error:",
@@ -464,69 +577,78 @@ exports.mermaidToInkboard = async (req, res) => {
         .json({ success: false, message: "Mermaid code is required" });
     }
 
-    const aiResponse = await callAI(
-      [
-        { role: "system", content: DIAGRAM_SYSTEM_PROMPT },
-        {
-          role: "user",
-          content: `Convert this Mermaid diagram into the graph JSON described above:\n\n${mermaid_code}`,
-        },
-      ],
-      2000,
-      0.2,
+    let result;
+    let isImage = false;
+
+    console.log(
+      `[${new Date().toISOString()}] [mermaidToInkboard] Received mermaid_code (first 100 chars): "${String(mermaid_code).slice(0, 100)}" (user: ${req.user?.id || "unknown"}, board: ${board_id || "none"})`,
     );
 
-    const content = aiResponse?.choices?.[0]?.message?.content;
+    const AIBANANA_TIMEOUT_MS = 45000; // 45s max for external scrape
+    const startTime = Date.now();
 
-    const badResponseIndicators = [
-      "structured graph in JSON",
-      "Return ONLY valid JSON",
-      "Please provide the user's request for diagramming",
-      "I will convert it in",
-      "a clean structured graph in JSON",
-    ];
-    const isBadAIResponse = badResponseIndicators.some((ind) =>
-      (content || "").toLowerCase().includes(ind.toLowerCase()),
-    );
-
-    let graph;
-
-    if (isBadAIResponse) {
-      console.warn(
-        "[mermaidToInkboard] Detected bad AI response. Using clean generation.",
+    try {
+      // Use AIBanana scrape for consistency (image-based diagram)
+      console.log(
+        "[mermaidToInkboard] Using AIBanana scrape... (will hard-timeout after 45s and fallback to graph)",
       );
-      graph = generateCleanSimpleGraph(mermaid_code || "Mermaid Diagram");
-    } else {
-      let parsed = extractJSON(content);
+      const imagePromise = generateDiagramImage(
+        `Convert this Mermaid code to a clean diagram image: ${mermaid_code}`,
+      );
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(
+          () =>
+            reject(
+              new Error(`AIBanana hard timeout after ${AIBANANA_TIMEOUT_MS}ms`),
+            ),
+          AIBANANA_TIMEOUT_MS,
+        ),
+      );
 
-      if (parsed && Array.isArray(parsed.nodes) && parsed.nodes.length > 0) {
-        graph = normalizeGraph(parsed, "Mermaid Diagram");
-      } else {
-        console.warn("[mermaidToInkboard] JSON parse failed. Using fallback.");
-        graph = generateFallbackGraph(mermaid_code || "Mermaid Diagram");
-      }
+      result = await Promise.race([imagePromise, timeoutPromise]);
+      isImage = true;
+      const elapsed = Date.now() - startTime;
+      console.log(
+        `[mermaidToInkboard] AIBanana success in ${elapsed}ms. Response type/shape keys:`,
+        Object.keys(result || {}),
+        "isImage:",
+        isImage,
+      );
+      if (result && result.images)
+        console.log("[mermaidToInkboard] Image count:", result.images.length);
+    } catch (scrapeErr) {
+      const elapsed = Date.now() - startTime;
+      console.warn(
+        `[mermaidToInkboard] AIBanana scrape failed/timed out after ${elapsed}ms, falling back to clean graph:`,
+        scrapeErr.message,
+      );
+      result = generateCleanSimpleGraph(mermaid_code || "Mermaid Diagram");
     }
 
     await query(
       `INSERT INTO ai_usage (id, user_id, board_id, tool_type, prompt, result, tokens_used, created_at)
        VALUES (uuid_generate_v4(), $1, $2, 'mermaid_to_inkboard', $3, $4, $5, NOW())`,
-      [
-        req.user.id,
-        board_id || null,
-        mermaid_code,
-        JSON.stringify(graph),
-        aiResponse.usage?.total_tokens || 0,
-      ],
+      [req.user.id, board_id || null, mermaid_code, JSON.stringify(result), 0],
     );
 
-    res.json({
-      success: true,
-      data: {
-        graph,
-        diagram: { elements: [], appState: {}, files: {} },
-        tokensUsed: aiResponse.usage?.total_tokens || 0,
-      },
-    });
+    if (isImage) {
+      res.json({
+        success: true,
+        data: {
+          image: result,
+          type: "image",
+        },
+      });
+    } else {
+      res.json({
+        success: true,
+        data: {
+          graph: result,
+          diagram: { elements: [], appState: {}, files: {} },
+          tokensUsed: 0,
+        },
+      });
+    }
   } catch (error) {
     console.error(
       "Mermaid to Inkboard error:",

@@ -121,9 +121,12 @@ export const userAPI = {
 
 /* ── AI ──────────────────────────────────────────────────── */
 export const aiAPI = {
-  textToDiagram: (d) => api.post("/ai/text-to-diagram", d),
-  mermaidToInkboard: (d) => api.post("/ai/mermaid-to-inkboard", d),
-  wireframeToCode: (d) => api.post("/ai/wireframe-to-code", d),
+  // Longer timeout for AI diagram generation (AIBanana external calls + solver can easily exceed 30s)
+  textToDiagram: (d) => api.post("/ai/text-to-diagram", d, { timeout: 180000 }),
+  mermaidToInkboard: (d) =>
+    api.post("/ai/mermaid-to-inkboard", d, { timeout: 180000 }),
+  wireframeToCode: (d) =>
+    api.post("/ai/wireframe-to-code", d, { timeout: 120000 }),
   getUsage: () => api.get("/ai/usage"),
 };
 

@@ -8,10 +8,10 @@
 // official `convertToExcalidrawElements()` which fills in all required internals
 // and wires up arrow ↔ node bindings automatically.
 
-const NODE_W = 200;
-const NODE_H = 80;
-const GAP_X = 120; // horizontal gap between columns / siblings
-const GAP_Y = 120; // vertical gap between rows / levels
+const NODE_W = 160;
+const NODE_H = 60;
+const GAP_X = 150; // horizontal gap between columns / siblings
+const GAP_Y = 90; // vertical gap between rows / levels - tighter for 5-node flows to avoid clipping and improve fit in view
 
 /**
  * Compute a simple layered layout (BFS levels) so nodes don't overlap.
@@ -97,9 +97,9 @@ export function graphToSkeleton(graph) {
   const direction = graph?.direction === "LR" ? "LR" : "TB";
   const pos = layout(nodes, edges, direction);
 
-  // Offset everything so the diagram lands in a tidy area of the canvas.
-  const OFFSET_X = 120;
-  const OFFSET_Y = 120;
+  // Offset everything so the diagram lands in a tidy area of the canvas. (matched to manual for consistency)
+  const OFFSET_X = 100;
+  const OFFSET_Y = 50;
 
   const elements = [];
 
@@ -165,25 +165,39 @@ function createManualElements(graph) {
   const edges = Array.isArray(graph?.edges) ? graph.edges : [];
   if (nodes.length === 0) return [];
 
-  const OFFSET_X = 120;
-  const OFFSET_Y = 120;
-  const NODE_W = 200;
-  const NODE_H = 80;
-  const GAP_X = 140;
-  const GAP_Y = 100;
+  const direction = graph?.direction === "LR" ? "LR" : "TB";
+  const pos = layout(nodes, edges, direction); // reuse the smart BFS layout for neat flow (like Lucidchart)
+
+  // Tighter offsets + gaps so 5-node vertical flows (like kasir/kafe) fit fully in view without clipping at bottom
+  // and lines/text/shapes have better balanced penataan (spacing, alignment)
+  const OFFSET_X = 100;
+  const OFFSET_Y = 50;
 
   const elements = [];
   const idToPos = new Map();
 
-  // Simple top-to-bottom layout
-  nodes.forEach((n, i) => {
-    const x = OFFSET_X + (i % 3) * (NODE_W + GAP_X);
-    const y = OFFSET_Y + Math.floor(i / 3) * (NODE_H + GAP_Y);
+  // Use proper layout positions ...
+  nodes.forEach((n) => {
+    const p = pos.get(n.id) || { x: 0, y: 0 };
+    let x = OFFSET_X + p.x;
+    let y = OFFSET_Y + p.y;
 
     idToPos.set(n.id, { x, y });
 
     const isEllipse = n.shape === "ellipse";
     const isDiamond = n.shape === "diamond";
+
+    let shapeHeight = NODE_H;
+    let textYOffset = 12;
+    let textHeight = NODE_H - 18;
+
+    if (isDiamond) {
+      // Diamonds are pointy - make them a bit taller and adjust text so label "Pembayaran" etc. is visible and centered inside
+      shapeHeight = NODE_H + 18; // ~78px tall for better text room
+      textYOffset = 18;
+      textHeight = 50;
+      // center the diamond horizontally a bit if needed (keep x)
+    }
 
     // Shape
     const shape = {
@@ -192,7 +206,7 @@ function createManualElements(graph) {
       x,
       y,
       width: NODE_W,
-      height: NODE_H,
+      height: shapeHeight,
       angle: 0,
       strokeColor: "#1e1e1e",
       backgroundColor: isDiamond ? "#fff3bf" : "#e7f5ff",
@@ -214,14 +228,14 @@ function createManualElements(graph) {
     };
     elements.push(shape);
 
-    // Text label inside the shape
+    // Text label inside the shape - better padding for centering in ovals/rects/diamonds
     const text = {
       id: `text-${n.id}`,
       type: "text",
-      x: x + 10,
-      y: y + 20,
-      width: NODE_W - 20,
-      height: 40,
+      x: x + 6,
+      y: y + textYOffset,
+      width: NODE_W - 12,
+      height: textHeight,
       angle: 0,
       strokeColor: "#1e1e1e",
       backgroundColor: "transparent",
@@ -241,13 +255,13 @@ function createManualElements(graph) {
       link: null,
       locked: false,
       text: n.label || n.id,
-      fontSize: 16,
+      fontSize: 13,
       fontFamily: 1,
       textAlign: "center",
       verticalAlign: "middle",
       containerId: shape.id,
       originalText: n.label || n.id,
-      lineHeight: 1.25,
+      lineHeight: 1.2,
     };
     elements.push(text);
 
@@ -255,19 +269,34 @@ function createManualElements(graph) {
     shape.boundElements.push({ type: "text", id: text.id });
   });
 
-  // Simple arrows
+  // Arrows using the proper layout positions (straight vertical/horizontal lines for clean penataan)
+  // Key fix: offset arrow start to AFTER the "from" shape (bottom for TB vertical) so the visible line segment
+  // sits between shapes, not overlapping them. This makes lines much cleaner ("tidak amburadul").
   edges.forEach((e) => {
     const from = idToPos.get(e.source);
     const to = idToPos.get(e.target);
     if (!from || !to) return;
 
+    const dx = to.x - from.x;
+    let arrowStartY = from.y + NODE_H; // start the arrow line below the upper shape (for vertical TB flows)
+    let dy = to.y - arrowStartY;
+
+    // For horizontal (LR) or mixed, fall back to simple center-to-center delta
+    if (Math.abs(dx) > Math.abs(dy) || dy < 0) {
+      arrowStartY = from.y;
+      dy = to.y - from.y;
+    }
+
+    const arrowX = Math.min(from.x, to.x);
+    const arrowY = Math.min(from.y, arrowStartY);
+
     const arrow = {
       id: `arrow-${e.source}-${e.target}`,
       type: "arrow",
-      x: Math.min(from.x, to.x),
-      y: Math.min(from.y, to.y),
-      width: Math.abs(to.x - from.x) + 20,
-      height: Math.abs(to.y - from.y) + 20,
+      x: arrowX - 5,
+      y: arrowY - 5,
+      width: Math.abs(dx) + 20,
+      height: Math.abs(dy) + 20,
       angle: 0,
       strokeColor: "#1e1e1e",
       backgroundColor: "transparent",
@@ -288,11 +317,11 @@ function createManualElements(graph) {
       locked: false,
       points: [
         [0, 0],
-        [to.x - from.x + 20, to.y - from.y + 20],
+        [dx, dy], // exact delta → perfectly straight vertical lines for TB flow
       ],
       lastCommittedPoint: null,
-      startBinding: { elementId: `shape-${e.source}`, focus: 0, gap: 10 },
-      endBinding: { elementId: `shape-${e.target}`, focus: 0, gap: 10 },
+      startBinding: { elementId: `shape-${e.source}`, focus: 0, gap: 6 },
+      endBinding: { elementId: `shape-${e.target}`, focus: 0, gap: 6 },
       startArrowhead: null,
       endArrowhead: "arrow",
     };
@@ -300,7 +329,7 @@ function createManualElements(graph) {
     if (e.label) {
       arrow.label = {
         text: e.label,
-        fontSize: 14,
+        fontSize: 11,
       };
     }
 

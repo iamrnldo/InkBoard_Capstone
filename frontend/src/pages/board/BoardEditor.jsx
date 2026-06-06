@@ -23,6 +23,7 @@ import { useBoardEditor } from "../../hooks/useBoard";
 import useAuthStore from "../../store/authStore";
 import { boardAPI, aiAPI } from "../../api";
 import { graphToExcalidrawElements } from "../../utils/diagram";
+import { convertToExcalidrawElements } from "@excalidraw/excalidraw"; // for better text/shape binding in official converter when available
 import Button from "../../components/common/Button";
 import Modal from "../../components/common/Modal";
 import LoadingSpinner, {
@@ -202,9 +203,11 @@ function AIPanel({ boardId, excalidrawAPI, onAIDiagramFallback, onClose }) {
   // canvas, scrolling them into view. Returns the number of elements added.
   const addGraphToCanvas = async (graph) => {
     const api = excalidrawAPI;
+    // Pass the official converter when possible for better penataan (text centering inside shapes incl. diamonds/ovals, arrow bindings)
+    // Falls back to improved manual if converter fails or not available
     const newElements = graphToExcalidrawElements(
       graph,
-      null, // pass null to force the manual creation fallback inside the util
+      convertToExcalidrawElements,
     );
 
     if (!newElements || newElements.length === 0) {
@@ -257,6 +260,170 @@ function AIPanel({ boardId, excalidrawAPI, onAIDiagramFallback, onClose }) {
     return newElements.length;
   };
 
+  // Handle AIBanana image response: embed the generated diagram image on the canvas (professional look, can be more complex/neat than simple graph)
+  // Supports both graph fallback and image path now.
+  const addImageToCanvas = async (imageResult) => {
+    const api = excalidrawAPI;
+    if (!imageResult) {
+      console.warn("[AI Diagram] No image result:", imageResult);
+      return 0;
+    }
+
+    // Extract possible image source from various AIBanana response shapes (url, images[0].url, base64, etc.)
+    let imageUrl = null;
+    let base64Data = null;
+    if (imageResult.images && imageResult.images[0]) {
+      imageUrl =
+        imageResult.images[0].url ||
+        imageResult.images[0].src ||
+        imageResult.images[0].data;
+      base64Data = imageResult.images[0].base64 || imageResult.images[0].data;
+    } else if (imageResult.url) {
+      imageUrl = imageResult.url;
+    } else if (imageResult.data && typeof imageResult.data === "string") {
+      if (imageResult.data.startsWith("http")) imageUrl = imageResult.data;
+      else base64Data = imageResult.data;
+    } else if (typeof imageResult === "string") {
+      if (imageResult.startsWith("http")) imageUrl = imageResult;
+      else base64Data = imageResult;
+    } else if (imageResult.image) {
+      // sometimes wrapped
+      return addImageToCanvas(imageResult.image);
+    }
+
+    if (!imageUrl && !base64Data) {
+      console.warn(
+        "[AI Diagram] Could not find image URL or base64 in AIBanana result. Keys:",
+        Object.keys(imageResult || {}),
+      );
+      toast.error(
+        "AI returned image but could not parse source. Check backend logs.",
+      );
+      return 0;
+    }
+
+    if (api) {
+      try {
+        let dataURL;
+        if (base64Data) {
+          dataURL = base64Data.startsWith("data:")
+            ? base64Data
+            : `data:image/png;base64,${base64Data.replace(/^data:image\/\w+;base64,/, "")}`;
+        } else {
+          // Fetch external image (may have CORS issues if aibanana.net blocks; fallback will handle)
+          const fetchRes = await fetch(imageUrl, {
+            mode: "cors",
+            cache: "no-cache",
+          });
+          if (!fetchRes.ok)
+            throw new Error(`Fetch image failed: ${fetchRes.status}`);
+          const blob = await fetchRes.blob();
+          dataURL = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+          });
+        }
+
+        const fileId = `ai-diagram-${Date.now()}`;
+        const file = {
+          id: fileId,
+          mimeType: "image/png",
+          dataURL,
+          created: Date.now(),
+        };
+
+        // Reasonable default size for diagram image (user can resize on canvas)
+        const imgEl = {
+          id: `ai-img-${Date.now()}`,
+          type: "image",
+          x: 120,
+          y: 120,
+          width: 640,
+          height: 640,
+          angle: 0,
+          strokeColor: "transparent",
+          backgroundColor: "transparent",
+          fillStyle: "solid",
+          strokeWidth: 0,
+          strokeStyle: "solid",
+          roughness: 0,
+          opacity: 100,
+          groupIds: [],
+          frameId: null,
+          roundness: null,
+          seed: Math.floor(Math.random() * 100000),
+          versionNonce: Math.floor(Math.random() * 100000),
+          isDeleted: false,
+          boundElements: [],
+          updated: Date.now(),
+          link: null,
+          locked: false,
+          fileId,
+          status: "saved",
+          scale: [1, 1],
+        };
+
+        api.updateScene({
+          elements: [...(api.getSceneElements() || []), imgEl],
+          files: {
+            ...(api.getFiles() || {}),
+            [fileId]: file,
+          },
+        });
+        api.scrollToContent([imgEl], { fitToContent: true });
+        console.log("[AI Diagram] Image embedded successfully from AIBanana");
+        return 1;
+      } catch (err) {
+        console.error("[AI Diagram] addImageToCanvas (api path) failed:", err);
+        // If fetch failed (CORS etc), at least show the url in a toast so user can use it
+        if (imageUrl) {
+          toast(
+            `AI image generated (CORS prevented embed). Open: ${imageUrl}`,
+            { duration: 8000 },
+          );
+        }
+        // Still force remount in case
+        if (onAIDiagramFallback) onAIDiagramFallback();
+        return 0;
+      }
+    }
+
+    // No excalidrawAPI: fallback store update (for images we avoid adding incomplete elements; just persist current + force remount + copy URL if available)
+    try {
+      const store = useBoardStore.getState();
+      const current = store.currentBoard;
+      if (current) {
+        // Do not add partial image element (can break canvas); user will see after remount or refresh
+        // but we can still update to trigger save
+        await boardAPI.updateBoard(boardId, {
+          canvas_data: current.canvas_data,
+        });
+        console.log(
+          "[AI Diagram] Image fallback (no full embed without Excalidraw API) - forcing remount",
+        );
+        if (onAIDiagramFallback) onAIDiagramFallback();
+        if (imageUrl) {
+          try {
+            await navigator.clipboard.writeText(imageUrl);
+          } catch (_) {}
+          toast.success(
+            "AI image URL copied to clipboard (you can open it or insert manually via image tool)",
+          );
+        } else {
+          toast(
+            "AI image generated but could not embed (no Excalidraw API). Try again or refresh.",
+          );
+        }
+        return 1;
+      }
+    } catch (err) {
+      console.error("[AI Diagram] Fallback store for image failed:", err);
+    }
+    return 0;
+  };
+
   const run = async () => {
     setLoading(true);
     setResult(null);
@@ -268,16 +435,28 @@ function AIPanel({ boardId, excalidrawAPI, onAIDiagramFallback, onClose }) {
           return;
         }
         res = await aiAPI.textToDiagram({ prompt, board_id: boardId });
-        const graph = res.data.data.graph;
-        const added = await addGraphToCanvas(graph);
-        if (added > 0) {
-          toast.success(`Diagram added to canvas! (${added} elements)`);
-          setResult({ type: "diagram", data: graph });
+        const respData = res.data.data || {};
+        if (respData.type === "image") {
+          const added = await addImageToCanvas(respData.image);
+          if (added > 0) {
+            toast.success("AI image diagram added to canvas!");
+            setResult({ type: "image", data: respData.image });
+          } else {
+            toast.error(
+              "Could not render the AI image on the canvas. Check console (F12) for details.",
+            );
+          }
         } else {
-          toast.error(
-            "Could not render the diagram on the canvas. Check the browser console (F12) for details and try again.",
-          );
-          // Do not set result box if we couldn't actually add anything
+          const graph = respData.graph;
+          const added = await addGraphToCanvas(graph);
+          if (added > 0) {
+            toast.success(`Diagram added to canvas! (${added} elements)`);
+            setResult({ type: "diagram", data: graph });
+          } else {
+            toast.error(
+              "Could not render the diagram on the canvas. Check the browser console (F12) for details and try again.",
+            );
+          }
         }
       } else if (activeTab === "mermaid-to-inkboard") {
         if (!mermaidCode.trim()) {
@@ -288,15 +467,26 @@ function AIPanel({ boardId, excalidrawAPI, onAIDiagramFallback, onClose }) {
           mermaid_code: mermaidCode,
           board_id: boardId,
         });
-        const graph = res.data.data.graph;
-        const added = await addGraphToCanvas(graph);
-        if (added > 0) {
-          toast.success(`Mermaid diagram converted! (${added} elements)`);
-          setResult({ type: "diagram", data: graph });
+        const respData = res.data.data || {};
+        if (respData.type === "image") {
+          const added = await addImageToCanvas(respData.image);
+          if (added > 0) {
+            toast.success("AI Mermaid image added to canvas!");
+            setResult({ type: "image", data: respData.image });
+          } else {
+            toast.error("Could not render the AI image. Check console.");
+          }
         } else {
-          toast.error(
-            "Could not render the diagram. Check the Mermaid syntax or try rephrasing.",
-          );
+          const graph = respData.graph;
+          const added = await addGraphToCanvas(graph);
+          if (added > 0) {
+            toast.success(`Mermaid diagram converted! (${added} elements)`);
+            setResult({ type: "diagram", data: graph });
+          } else {
+            toast.error(
+              "Could not render the diagram. Check the Mermaid syntax or try rephrasing.",
+            );
+          }
         }
       } else {
         const canvasData = {
@@ -453,6 +643,17 @@ function AIPanel({ boardId, excalidrawAPI, onAIDiagramFallback, onClose }) {
                 <pre className="bg-gray-50 dark:bg-gray-900 rounded-xl p-3 text-xs overflow-auto max-h-48 font-mono text-gray-700 dark:text-gray-300 whitespace-pre-wrap">
                   {result.data}
                 </pre>
+              </div>
+            ) : result.type === "image" ? (
+              <div className="p-3 bg-green-50 dark:bg-green-900/20 rounded-xl border border-green-200 dark:border-green-800">
+                <p className="text-xs text-green-700 dark:text-green-400 font-semibold">
+                  ✓ AI image diagram added to canvas (complex/neat from
+                  AIBanana)
+                </p>
+                <p className="text-[10px] text-green-600 dark:text-green-500 mt-1">
+                  (Image can be moved/resized on canvas; for fully editable
+                  vector use graph fallback)
+                </p>
               </div>
             ) : (
               <div className="p-3 bg-green-50 dark:bg-green-900/20 rounded-xl border border-green-200 dark:border-green-800">
